@@ -18,13 +18,14 @@ import (
 
 // SelfMonitor 周期采集 agent 自身状态并走指标管道上送。
 type SelfMonitor struct {
-	rep     *reporter.Reporter
-	version string
-	startAt time.Time
+	rep       *reporter.Reporter
+	scheduler *collector.Scheduler
+	version   string
+	startAt   time.Time
 }
 
-func NewSelfMonitor(cfg *config.Config, rep *reporter.Reporter, version string) *SelfMonitor {
-	return &SelfMonitor{rep: rep, version: version, startAt: time.Now()}
+func NewSelfMonitor(cfg *config.Config, rep *reporter.Reporter, sched *collector.Scheduler, version string) *SelfMonitor {
+	return &SelfMonitor{rep: rep, scheduler: sched, version: version, startAt: time.Now()}
 }
 
 func (s *SelfMonitor) Name() string { return "self-monitor" }
@@ -59,6 +60,18 @@ func (s *SelfMonitor) report() {
 	}
 	if rss, err := selfRSS(); err == nil {
 		metrics = append(metrics, collector.Metric{Name: "agent.self.rss.bytes", Timestamp: now, Value: rss, Labels: labels})
+	}
+	if s.scheduler != nil {
+		metrics = append(metrics, collector.Metric{
+			Name: "agent.degraded", Timestamp: now,
+			Value: map[bool]float64{true: 1, false: 0}[s.scheduler.Degraded()], Labels: labels,
+		})
+	}
+	for kind, bytes := range s.rep.WALPending() {
+		metrics = append(metrics, collector.Metric{
+			Name: "agent.wal.pending.bytes", Timestamp: now, Value: float64(bytes),
+			Labels: map[string]string{"agent_version": s.version, "queue": kind},
+		})
 	}
 	s.rep.Submit(metrics)
 }

@@ -6,6 +6,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tomhu/tom_ai_agent/internal/config"
@@ -30,7 +31,7 @@ type Collector interface {
 	Collect(ctx context.Context) ([]Metric, error)
 }
 
-// Scheduler 按各自周期调度采集器，失败隔离。
+// Scheduler 按各自周期调度采集器，失败隔离；支持降级模式（资源哨兵触发）。
 type Scheduler struct {
 	cfg        *config.Config
 	sink       Sink
@@ -38,11 +39,23 @@ type Scheduler struct {
 	intervals  map[string]time.Duration
 	wg         sync.WaitGroup
 
+	// 降级模式：跳过非关键采集器（diskcap/net/load 等高频低优先），保留 cpu/memory
+	degraded atomic.Bool
+
 	// 自监控计数（watchdog 读取）
 	collectErrors  map[string]*int64
 	collectLatency map[string]*int64 // 毫秒
 	mu             sync.RWMutex
 }
+
+// nonCritical 降级时被跳过的采集器。
+var nonCritical = map[string]bool{"diskcap": true, "net": true, "load": true}
+
+// SetDegraded 实现 watchdog.Degradable。
+func (s *Scheduler) SetDegraded(on bool) { s.degraded.Store(on) }
+
+// Degraded 当前是否处于降级模式。
+func (s *Scheduler) Degraded() bool { return s.degraded.Load() }
 
 func NewScheduler(cfg *config.Config, sink Sink) *Scheduler {
 	s := &Scheduler{
@@ -122,8 +135,12 @@ func (s *Scheduler) loop(ctx context.Context, c Collector, interval time.Duratio
 }
 
 // runOnce 单次采集：独立超时 + panic 隔离（设计文档 §3.2 失败隔离）。
+// 降级模式下跳过非关键采集器。
 func (s *Scheduler) runOnce(ctx context.Context, c Collector) {
 	name := c.Name()
+	if s.degraded.Load() && nonCritical[name] {
+		return
+	}
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 

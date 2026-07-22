@@ -1,0 +1,74 @@
+// mockgateway 是开发联调用模拟网关：接收 agent 的 metrics/results/audit 上报并计数打印。
+// 用法: mockgateway -listen :18080
+// 配合 agent 配置 uplink.mode=http, uplink.addr=http://<host>:18080
+package main
+
+import (
+	"compress/gzip"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"sync/atomic"
+	"time"
+)
+
+var counters = map[string]*atomic.Uint64{
+	"metrics": {}, "results": {}, "audit": {},
+}
+
+func handler(w http.ResponseWriter, r *http.Request) {
+	kind := r.URL.Path[len("/v1/"):]
+	c, ok := counters[kind]
+	if !ok {
+		http.Error(w, "unknown path", http.StatusNotFound)
+		return
+	}
+	var body io.Reader = r.Body
+	if r.Header.Get("Content-Encoding") == "gzip" {
+		gz, err := gzip.NewReader(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		defer gz.Close()
+		body = gz
+	}
+	data, err := io.ReadAll(body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	c.Add(1)
+	// 打印批次概要
+	var probe struct {
+		Sequence uint64 `json:"sequence"`
+		Samples  []any  `json:"samples"`
+		Items    []any  `json:"items"`
+	}
+	json.Unmarshal(data, &probe)
+	log.Printf("[%s] batch seq=%d samples=%d items=%d bytes=%d",
+		kind, probe.Sequence, len(probe.Samples), len(probe.Items), len(data))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func main() {
+	listen := flag.String("listen", ":18080", "监听地址")
+	flag.Parse()
+
+	http.HandleFunc("/v1/metrics", handler)
+	http.HandleFunc("/v1/results", handler)
+	http.HandleFunc("/v1/audit", handler)
+
+	go func() { // 每 30s 汇总
+		for range time.Tick(30 * time.Second) {
+			fmt.Printf("== totals: metrics=%d results=%d audit=%d ==\n",
+				counters["metrics"].Load(), counters["results"].Load(), counters["audit"].Load())
+		}
+	}()
+
+	log.Printf("mockgateway listening on %s", *listen)
+	log.Fatal(http.ListenAndServe(*listen, nil))
+}

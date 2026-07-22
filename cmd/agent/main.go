@@ -67,13 +67,25 @@ func main() {
 
 	// 核心调度：注册模块
 	app := core.New()
+	sched := collector.NewScheduler(cfg, rep)
 	app.Add(rep)
-	app.Add(collector.NewScheduler(cfg, rep))
-	app.Add(watchdog.NewSelfMonitor(cfg, rep, version))
+	app.Add(sched)
+	app.Add(watchdog.NewSelfMonitor(cfg, rep, sched, version))
+	app.Add(watchdog.NewSentinel(&cfg.Watchdog, sched, rep))
 
 	if err := app.Start(ctx); err != nil {
 		slog.Error("start modules", "err", err)
 		os.Exit(1)
+	}
+	watchdog.NotifyReady()
+	if watchdog.StartWatchdog(ctx.Done()) {
+		slog.Info("systemd watchdog enabled")
+	}
+	// 启动审计事件（可靠队列，验证 results/audit 链路）
+	if err := rep.SubmitReliable(reporter.QueueAudit,
+		fmt.Sprintf("agent.start-%d", time.Now().UnixNano()),
+		map[string]any{"event": "agent.start", "version": version}); err != nil {
+		slog.Warn("emit start event failed", "err", err)
 	}
 	slog.Info("agent started", "modules", app.Names())
 
@@ -94,5 +106,6 @@ func main() {
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer stopCancel()
 	app.Stop(stopCtx)
+	rep.Close()
 	slog.Info("agent stopped")
 }

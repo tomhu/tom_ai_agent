@@ -1,4 +1,4 @@
-# tom_ai_agent 配置示例（设计文档 docs/agent-design.md §9.2 的 M1 子集）
+# tom_ai_agent 配置示例（设计文档 docs/agent-design.md §9.2 的 M1-M3 子集）
 agent:
   data_dir: /var/lib/tom_ai_agent
   log_level: info          # debug/info/warn/error
@@ -6,7 +6,7 @@ agent:
 
 uplink:
   mode: stdout             # stdout | http （grpc 待 proto 冻结后接入）
-  addr: ""                 # mode=http 时必填，如 http://192.168.70.1:18080/v1/metrics
+  addr: ""                 # mode=http 时必填，如 http://192.168.70.1:18080
 
 collectors:
   cpu:     { enabled: true, interval: 10s }
@@ -19,3 +19,13 @@ reporter:
   buffer_size: 10000
   batch_size: 500
   batch_interval: 1s
+  wal:
+    enabled: true            # 可靠队列(results/audit)持久化
+    max_mb: 100              # 单队列磁盘配额
+    metrics_fallback: true   # 指标发送失败时落 WAL 兜底
+
+watchdog:
+  rss_soft_mb: 150           # 软限：进入降级(暂停非关键采集器+GC)
+  rss_hard_mb: 190           # 硬限：自我退出交 systemd 重启
+  fd_limit: 1024
+  degraded_mode: true
