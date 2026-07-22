@@ -16,6 +16,8 @@ import (
 	"github.com/tomhu/tom_ai_agent/internal/collector"
 	"github.com/tomhu/tom_ai_agent/internal/config"
 	"github.com/tomhu/tom_ai_agent/internal/core"
+	"github.com/tomhu/tom_ai_agent/internal/inventory"
+	"github.com/tomhu/tom_ai_agent/internal/register"
 	"github.com/tomhu/tom_ai_agent/internal/reporter"
 	"github.com/tomhu/tom_ai_agent/internal/watchdog"
 )
@@ -68,10 +70,12 @@ func main() {
 	// 核心调度：注册模块
 	app := core.New()
 	sched := collector.NewScheduler(cfg, rep)
+	app.Add(register.New(cfg, rep.SetAssetID))
 	app.Add(rep)
 	app.Add(sched)
 	app.Add(watchdog.NewSelfMonitor(cfg, rep, sched, version))
 	app.Add(watchdog.NewSentinel(&cfg.Watchdog, sched, rep))
+	app.Add(inventory.NewModule(&cfg.Inventory, rep))
 
 	if err := app.Start(ctx); err != nil {
 		slog.Error("start modules", "err", err)

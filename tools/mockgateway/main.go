@@ -11,12 +11,48 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 )
 
 var counters = map[string]*atomic.Uint64{
-	"metrics": {}, "results": {}, "audit": {},
+	"metrics": {}, "results": {}, "audit": {}, "inventory": {},
+}
+
+// 模拟注册服务：按 enrollment_request_id 幂等返回 asset_id。
+var (
+	registry   = map[string]string{}
+	registryMu sync.Mutex
+)
+
+func registerHandler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		EnrollmentRequestID string            `json:"enrollment_request_id"`
+		BootstrapToken      string            `json:"bootstrap_token"`
+		Materials           map[string]string `json:"materials"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.BootstrapToken == "" {
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{"error": "bootstrap token required"})
+		return
+	}
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	if id, ok := registry[req.EnrollmentRequestID]; ok {
+		log.Printf("[register] idempotent replay for %s -> %s", req.EnrollmentRequestID, id)
+		json.NewEncoder(w).Encode(map[string]string{"asset_id": id})
+		return
+	}
+	id := fmt.Sprintf("a-mock-%06d", len(registry)+1)
+	registry[req.EnrollmentRequestID] = id
+	log.Printf("[register] NEW %s -> %s (host=%s machine_id=%s)",
+		req.EnrollmentRequestID, id, req.Materials["hostname"], req.Materials["machine_id"])
+	json.NewEncoder(w).Encode(map[string]string{"asset_id": id})
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
@@ -61,11 +97,14 @@ func main() {
 	http.HandleFunc("/v1/metrics", handler)
 	http.HandleFunc("/v1/results", handler)
 	http.HandleFunc("/v1/audit", handler)
+	http.HandleFunc("/v1/inventory", handler)
+	http.HandleFunc("/v1/register", registerHandler)
 
 	go func() { // 每 30s 汇总
 		for range time.Tick(30 * time.Second) {
-			fmt.Printf("== totals: metrics=%d results=%d audit=%d ==\n",
-				counters["metrics"].Load(), counters["results"].Load(), counters["audit"].Load())
+			fmt.Printf("== totals: metrics=%d results=%d audit=%d inventory=%d ==\n",
+				counters["metrics"].Load(), counters["results"].Load(),
+				counters["audit"].Load(), counters["inventory"].Load())
 		}
 	}()
 

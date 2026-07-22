@@ -27,9 +27,10 @@ import (
 type QueueKind string
 
 const (
-	QueueMetrics QueueKind = "metrics"
-	QueueResults QueueKind = "results"
-	QueueAudit   QueueKind = "audit"
+	QueueMetrics   QueueKind = "metrics"
+	QueueResults   QueueKind = "results"
+	QueueAudit     QueueKind = "audit"
+	QueueInventory QueueKind = "inventory"
 )
 
 // Batch 指标发送单元（proto 冻结后切换为 HostMetricBatch）。
@@ -117,7 +118,7 @@ func New(cfg *config.Config) (*Reporter, error) {
 		if err := os.MkdirAll(filepath.Join(r.dataDir, "wal"), 0o700); err != nil {
 			return nil, err
 		}
-		for _, kind := range []QueueKind{QueueResults, QueueAudit} {
+		for _, kind := range []QueueKind{QueueResults, QueueAudit, QueueInventory} {
 			w, err := OpenWAL(filepath.Join(r.dataDir, "wal", string(kind)), r.walMaxBytes)
 			if err != nil {
 				return nil, fmt.Errorf("open wal %s: %w", kind, err)
@@ -167,6 +168,19 @@ func (r *Reporter) SubmitReliable(kind QueueKind, id string, payload any) error 
 		return fmt.Errorf("reliable queue %s unavailable (wal disabled)", kind)
 	}
 	return w.Append(data)
+}
+
+// SetAssetID 注册完成后回填平台签发身份（register 模块回调）。
+func (r *Reporter) SetAssetID(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.assetID = id
+}
+
+func (r *Reporter) currentAssetID() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.assetID
 }
 
 // Stats 供自监控上报。
@@ -240,7 +254,7 @@ func (r *Reporter) flushMetrics(ctx context.Context) {
 		r.mu.Unlock()
 
 		r.seq++
-		b := &Batch{AssetID: r.assetID, SentAt: time.Now().UnixMilli(), Sequence: r.seq, Samples: samples}
+		b := &Batch{AssetID: r.currentAssetID(), SentAt: time.Now().UnixMilli(), Sequence: r.seq, Samples: samples}
 		if err := r.sink.SendMetrics(ctx, b); err != nil {
 			slog.Warn("send metrics failed", "seq", b.Sequence, "err", err)
 			if r.metricsWAL != nil {
@@ -292,7 +306,7 @@ func (r *Reporter) replayLoop(ctx context.Context, kind QueueKind, w *WAL) {
 			continue
 		}
 
-		batch := &ReliableBatch{AssetID: r.assetID, Kind: kind, SentAt: time.Now().UnixMilli()}
+		batch := &ReliableBatch{AssetID: r.currentAssetID(), Kind: kind, SentAt: time.Now().UnixMilli()}
 		for _, raw := range items {
 			var it ReliableItem
 			if json.Unmarshal(raw, &it) == nil {

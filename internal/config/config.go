@@ -37,6 +37,32 @@ type Config struct {
 	Collectors map[string]CollectorConf `yaml:"collectors"`
 	Reporter   ReporterConf             `yaml:"reporter"`
 	Watchdog   WatchdogConf             `yaml:"watchdog"`
+	Register   RegisterConf             `yaml:"register"`
+	Inventory  InventoryConf            `yaml:"inventory"`
+}
+
+// RegisterConf 注册引导（设计文档 §8.1）。
+type RegisterConf struct {
+	BootstrapToken string `yaml:"bootstrap_token"` // 一次性引导凭据（正式版从文件读取）
+}
+
+// InventoryConf 资产采集上报（设计文档 §8.2）。
+type InventoryConf struct {
+	Enabled      bool                   `yaml:"enabled"`
+	FullInterval time.Duration          `yaml:"full_interval"`
+	Packages     InventoryPackagesConf  `yaml:"packages"`
+	Processes    InventoryProcessesConf `yaml:"processes"`
+}
+
+type InventoryPackagesConf struct {
+	Enabled  bool     `yaml:"enabled"`
+	Patterns []string `yaml:"patterns"`
+}
+
+type InventoryProcessesConf struct {
+	Enabled        bool     `yaml:"enabled"`
+	UploadEnabled  bool     `yaml:"upload_enabled"` // 缓建决策：默认 false，仅采集缓存
+	RedactPatterns []string `yaml:"redact_patterns"`
 }
 
 type AgentConf struct {
@@ -65,6 +91,20 @@ func Load(path string) (*Config, error) {
 			WAL: WALConf{Enabled: true, MaxMB: 100, MetricsFallback: true},
 		},
 		Watchdog: WatchdogConf{RSSSoftMB: 150, RSSHardMB: 190, FDLimit: 1024, DegradedMode: true},
+		Register: RegisterConf{},
+		Inventory: InventoryConf{
+			Enabled:      true,
+			FullInterval: 24 * time.Hour,
+			Packages: InventoryPackagesConf{
+				Enabled:  true,
+				Patterns: []string{"kylin-*", "bes*", "goldendb*", "gaussdb*", "polardb*"},
+			},
+			Processes: InventoryProcessesConf{
+				Enabled:        true,
+				UploadEnabled:  false,
+				RedactPatterns: []string{"--password=*", "--token=*", "--secret=*"},
+			},
+		},
 		Collectors: map[string]CollectorConf{
 			"cpu":     {Enabled: true, Interval: 10 * time.Second},
 			"memory":  {Enabled: true, Interval: 10 * time.Second},
