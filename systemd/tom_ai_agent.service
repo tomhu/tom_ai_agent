@@ -1,0 +1,33 @@
+[Unit]
+Description=tom_ai_agent - AIOps Host Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tomagent
+Group=tomagent
+ExecStart=/usr/local/bin/tom_ai_agent -config /etc/tom_ai_agent/agent.yaml
+Restart=always
+RestartSec=5
+StartLimitBurst=5
+
+# 资源硬限额（设计文档 §6.3/§7.1：agent 不能拖垮生产服务器）
+MemoryHigh=100M
+MemoryMax=200M
+CPUQuota=10%
+TasksMax=256
+
+# 安全收缩
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/tom_ai_agent
+# 采集 /proc、/sys 需要的能力保持默认（低权用户可读）
+
+# systemd 看门狗（M3 接入 sd_notify 后启用）
+# WatchdogSec=30
+
+[Install]
+WantedBy=multi-user.target

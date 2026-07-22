@@ -1,0 +1,21 @@
+# tom_ai_agent 配置示例（设计文档 docs/agent-design.md §9.2 的 M1 子集）
+agent:
+  data_dir: /var/lib/tom_ai_agent
+  log_level: info          # debug/info/warn/error
+  asset_id: ""             # M2 注册流程签发；当前可手工指定便于联调
+
+uplink:
+  mode: stdout             # stdout | http （grpc 待 proto 冻结后接入）
+  addr: ""                 # mode=http 时必填，如 http://192.168.70.1:18080/v1/metrics
+
+collectors:
+  cpu:     { enabled: true, interval: 10s }
+  memory:  { enabled: true, interval: 10s }
+  load:    { enabled: true, interval: 10s }
+  diskcap: { enabled: true, interval: 60s }
+  net:     { enabled: true, interval: 10s }
+
+reporter:
+  buffer_size: 10000
+  batch_size: 500
+  batch_interval: 1s
