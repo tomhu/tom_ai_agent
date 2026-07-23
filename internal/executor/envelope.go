@@ -5,18 +5,39 @@
 package executor
 
 import (
+	"log/slog"
 	"time"
 
+	"github.com/tomhu/tom_ai_agent/internal/authenv"
 	agentv1 "github.com/tomhu/tom_ai_agent/internal/pb/agent/v1"
 )
 
-// SubmitEnvelope 信封入口：先做过期检查（fail-closed），再交动作目录校验与队列。
+// SubmitEnvelope 信封入口：验签（M5c fail-closed）→ 过期 → nonce 防重放 → 动作目录与队列。
 func (e *Engine) SubmitEnvelope(env *agentv1.CommandEnvelope) {
-	if env.ExpiresAt > 0 && time.Now().UnixMilli() > env.ExpiresAt {
+	reject := func(reason string) {
+		slog.Warn("envelope rejected", "cmd_id", env.CmdId, "reason", reason)
 		e.reportImmediate(Result{
 			CmdID: env.CmdId, Status: "REJECTED_POLICY", ExitCode: -1,
-			Stderr: "envelope expired", FinishedAt: time.Now().UnixMilli(),
+			Stderr: reason, FinishedAt: time.Now().UnixMilli(),
 		})
+	}
+	now := time.Now().UnixMilli()
+	if e.verifyKey != nil {
+		if err := authenv.Verify(e.verifyKey, env); err != nil {
+			reject("signature invalid: " + err.Error())
+			return
+		}
+		if len(env.Nonce) == 0 {
+			reject("nonce required")
+			return
+		}
+		if err := e.nonces.Check(env.Nonce, env.ExpiresAt, now); err != nil {
+			reject(err.Error())
+			return
+		}
+	}
+	if env.ExpiresAt > 0 && now > env.ExpiresAt {
+		reject("envelope expired")
 		return
 	}
 	res := e.Submit(Command{

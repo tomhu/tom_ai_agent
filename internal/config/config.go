@@ -51,6 +51,8 @@ type ExecutorConf struct {
 	KillGrace        time.Duration `yaml:"kill_grace"`
 	OutputLimitKB    int           `yaml:"output_limit_kb"`
 	AllowTestActions bool          `yaml:"allow_test_actions"` // 仅联调：test_sleep 等
+	// 信封验签（M5c）：配置后未签名/验签失败/重放信封一律 REJECTED_POLICY（fail-closed）
+	CommandPubkeyFile string `yaml:"command_pubkey_file"` // Ed25519 公钥（PKIX PEM）
 }
 
 // RegisterConf 注册引导（设计文档 §8.1）。

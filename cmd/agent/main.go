@@ -87,7 +87,11 @@ func main() {
 		},
 		AllowTestActions: cfg.Executor.AllowTestActions,
 	}
-	engine := executor.NewEngine(&cfg.Executor, rep, hooks)
+	engine, err := executor.NewEngine(&cfg.Executor, rep, hooks)
+	if err != nil {
+		slog.Error("init executor", "err", err)
+		os.Exit(1)
+	}
 
 	app.Add(register.New(cfg, rep.SetAssetID))
 	app.Add(rep)

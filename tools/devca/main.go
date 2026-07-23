@@ -53,9 +53,41 @@ func main() {
 		}
 		must(issue(*dir, *name, *server, *cn, *sans, *days))
 		fmt.Printf("issued: %s/{%s.crt,%s.key}\n", *dir, *name, *name)
+	case "signkey":
+		fs := flag.NewFlagSet("signkey", flag.ExitOnError)
+		dir := fs.String("dir", "pki/dev", "输出目录")
+		name := fs.String("name", "signer", "文件名前缀")
+		fs.Parse(os.Args[2:])
+		must(genSignKey(*dir, *name))
+		fmt.Printf("signer key: %s/{%s.pub,%s.key}（平台 Signer 私钥；agent 配公钥验签）\n", *dir, *name, *name)
 	default:
 		log.Fatalf("unknown subcommand %q", os.Args[1])
 	}
+}
+
+// genSignKey 生成指令签名 Ed25519 密钥对（PKIX/PKCS8 PEM）。
+func genSignKey(dir, name string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return err
+	}
+	pubDER, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		return err
+	}
+	privDER, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, name+".pub"),
+		pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER}), 0o644); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, name+".key"),
+		pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privDER}), 0o600)
 }
 
 func must(err error) {

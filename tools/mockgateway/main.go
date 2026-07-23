@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+
+	"github.com/tomhu/tom_ai_agent/internal/authenv"
 )
 
 var counters = map[string]*atomic.Uint64{
@@ -237,7 +239,17 @@ func main() {
 	tlsCA := flag.String("tls-ca", "", "mTLS 根 CA 证书（提供则启用双向认证）")
 	tlsCert := flag.String("tls-cert", "", "服务端证书")
 	tlsKey := flag.String("tls-key", "", "服务端私钥")
+	signKey := flag.String("sign-key", "", "指令签名 Ed25519 私钥（提供则信封全签名）")
 	flag.Parse()
+
+	if *signKey != "" {
+		k, err := authenv.LoadPrivateKeyPEM(*signKey)
+		if err != nil {
+			log.Fatalf("load sign key: %v", err)
+		}
+		signerKey = k
+		log.Printf("command envelope signing enabled")
+	}
 
 	// gRPC 服务端（proto v1 三流）
 	go func() {

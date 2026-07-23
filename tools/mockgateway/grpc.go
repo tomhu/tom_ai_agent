@@ -3,6 +3,8 @@
 package main
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -16,8 +18,12 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 
+	"github.com/tomhu/tom_ai_agent/internal/authenv"
 	agentv1 "github.com/tomhu/tom_ai_agent/internal/pb/agent/v1"
 )
+
+// signerKey 指令签名私钥（-sign-key 提供；nil=开发态不签名）。
+var signerKey ed25519.PrivateKey
 
 // serverMTLS 服务端双向认证：强制校验客户端证书（CN=asset_id 由控制流 Hello 复核）。
 func serverMTLS(caFile, certFile, keyFile string) (credentials.TransportCredentials, error) {
@@ -127,10 +133,15 @@ func (g *gatewayServer) Control(s agentv1.AgentGateway_ControlServer) error {
 					IssuedAt:   time.Now().UnixMilli(),
 					ExpiresAt:  time.Now().Add(5 * time.Minute).UnixMilli(),
 				}
+				if signerKey != nil {
+					env.Nonce = make([]byte, 16)
+					_, _ = rand.Read(env.Nonce)
+					authenv.Sign(signerKey, env)
+				}
 				if err := s.Send(&agentv1.GatewayControlFrame{Frame: &agentv1.GatewayControlFrame_Command{Command: env}}); err != nil {
 					return err
 				}
-				log.Printf("[grpc] command pushed asset=%s cmd=%s action=%s", assetID, c.CmdID, c.Action)
+				log.Printf("[grpc] command pushed asset=%s cmd=%s action=%s signed=%v", assetID, c.CmdID, c.Action, signerKey != nil)
 			}
 			for _, id := range cancelsForAsset {
 				if err := s.Send(&agentv1.GatewayControlFrame{Frame: &agentv1.GatewayControlFrame_Cancel{

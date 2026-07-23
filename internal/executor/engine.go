@@ -7,6 +7,7 @@ package executor
 
 import (
 	"context"
+	"crypto/ed25519"
 	"fmt"
 	"log/slog"
 	"os/exec"
@@ -14,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/tomhu/tom_ai_agent/internal/authenv"
 	"github.com/tomhu/tom_ai_agent/internal/config"
 	"github.com/tomhu/tom_ai_agent/internal/reporter"
 )
@@ -46,18 +48,30 @@ type Engine struct {
 	rep     *reporter.Reporter
 	catalog map[string]*Action
 
+	verifyKey ed25519.PublicKey // nil=开发态不验签；非 nil=fail-closed 验签
+	nonces    *authenv.NonceCache
+
 	queue   chan Command
 	running sync.Map // cmd_id -> cancel context.CancelFunc
 	wg      sync.WaitGroup
 }
 
-func NewEngine(cfg *config.ExecutorConf, rep *reporter.Reporter, h *Hooks) *Engine {
-	return &Engine{
+func NewEngine(cfg *config.ExecutorConf, rep *reporter.Reporter, h *Hooks) (*Engine, error) {
+	e := &Engine{
 		cfg:     cfg,
 		rep:     rep,
 		catalog: catalog(h),
 		queue:   make(chan Command, cfg.QueueSize),
+		nonces:  authenv.NewNonceCache(10000),
 	}
+	if cfg.CommandPubkeyFile != "" {
+		pub, err := authenv.LoadPublicKeyPEM(cfg.CommandPubkeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("load command pubkey: %w", err)
+		}
+		e.verifyKey = pub
+	}
+	return e, nil
 }
 
 func (e *Engine) Name() string { return "executor" }
