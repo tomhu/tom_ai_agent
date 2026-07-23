@@ -5,12 +5,13 @@
 3. 模拟网关中断 60s（防火墙 DROP），验证 WAL 积压
 4. 恢复，验证 WAL 重放补送
 """
+import os
 import sys
 import time
 
 import paramiko
 
-HOST = "192.168.70.41"
+HOST = os.environ.get("VM_IP", "172.19.170.178")
 USER = "tom"
 PASSWORD = "Peter2026@"
 GW = "http://192.168.64.1:18080"

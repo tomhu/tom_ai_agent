@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Deploy tom_ai_agent to the Kylin test VM and run a smoke test."""
+import os
 import sys
 import time
 
 import paramiko
 
-HOST = "192.168.70.41"
+HOST = os.environ.get("VM_IP", "172.19.170.178")
 USER = "tom"
 PASSWORD = "Peter2026@"
 AGENT_BIN = r"C:\Users\tomhu\Documents\tools\tom_aiops\aiops_tools\tom_ai_agent\dist\tom_ai_agent-linux-amd64"
