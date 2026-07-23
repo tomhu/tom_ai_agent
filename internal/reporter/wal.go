@@ -169,6 +169,13 @@ func (w *WAL) ReadFrom(cur walCursor, max int) ([][]byte, walCursor, error) {
 	if err != nil {
 		return nil, cur, err
 	}
+	if len(segs) == 0 {
+		return nil, cur, nil
+	}
+	if cur.Segment > segs[len(segs)-1] {
+		// 游标越过最新段（旧游标/段被清理）：从头扫，平台按 id 去重
+		cur = walCursor{}
+	}
 	var out [][]byte
 	for _, seg := range segs {
 		if seg < cur.Segment || len(out) >= max {
@@ -179,16 +186,14 @@ func (w *WAL) ReadFrom(cur walCursor, max int) ([][]byte, walCursor, error) {
 			slog.Warn("wal segment corrupt, skipping remainder", "dir", w.dir, "segment", seg)
 		}
 		out = append(out, entries...)
-		if seg == w.activeSeg && nextOff > 0 {
-			cur = walCursor{Segment: seg, Offset: nextOff}
-		} else if nextOff > 0 {
+		if nextOff > 0 {
 			cur = walCursor{Segment: seg, Offset: nextOff}
 		}
 		if len(out) >= max {
 			break
 		}
-		// 本段读完且还有更老的段 → 推进到下一段开头
-		if !corrupt {
+		// 本段读完且存在更新的段 → 推进到下一段开头；否则留在本段 EOF 等待新追加
+		if seg < segs[len(segs)-1] {
 			cur = walCursor{Segment: seg + 1, Offset: 0}
 		}
 	}

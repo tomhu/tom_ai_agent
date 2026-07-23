@@ -29,3 +29,12 @@ watchdog:
   rss_hard_mb: 190           # 硬限：自我退出交 systemd 重启
   fd_limit: 1024
   degraded_mode: true
+
+executor:                    # M4 指令执行器
+  enabled: true
+  workers: 4                 # 并发执行 worker 数
+  queue_size: 64             # 待执行队列容量（满则 REJECTED_BUSY）
+  max_timeout: 300s          # 指令超时上限（平台超时不被信任为无上限）
+  kill_grace: 3s             # SIGTERM 宽限后 SIGKILL 整个进程组
+  output_limit_kb: 1024      # stdout/stderr 截断上限（头1/2+尾1/2）
+  allow_test_actions: false  # 联调期可开：diagnose.test_sleep 验证超时查杀

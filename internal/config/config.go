@@ -39,6 +39,18 @@ type Config struct {
 	Watchdog   WatchdogConf             `yaml:"watchdog"`
 	Register   RegisterConf             `yaml:"register"`
 	Inventory  InventoryConf            `yaml:"inventory"`
+	Executor   ExecutorConf             `yaml:"executor"`
+}
+
+// ExecutorConf 指令执行器（设计文档 §5.4）。
+type ExecutorConf struct {
+	Enabled          bool          `yaml:"enabled"`
+	Workers          int           `yaml:"workers"`
+	QueueSize        int           `yaml:"queue_size"`
+	MaxTimeout       time.Duration `yaml:"max_timeout"`
+	KillGrace        time.Duration `yaml:"kill_grace"`
+	OutputLimitKB    int           `yaml:"output_limit_kb"`
+	AllowTestActions bool          `yaml:"allow_test_actions"` // 仅联调：test_sleep 等
 }
 
 // RegisterConf 注册引导（设计文档 §8.1）。
@@ -91,6 +103,11 @@ func Load(path string) (*Config, error) {
 			WAL: WALConf{Enabled: true, MaxMB: 100, MetricsFallback: true},
 		},
 		Watchdog: WatchdogConf{RSSSoftMB: 150, RSSHardMB: 190, FDLimit: 1024, DegradedMode: true},
+		Executor: ExecutorConf{
+			Enabled: true, Workers: 4, QueueSize: 64,
+			MaxTimeout: 300 * time.Second, KillGrace: 3 * time.Second,
+			OutputLimitKB: 1024,
+		},
 		Register: RegisterConf{},
 		Inventory: InventoryConf{
 			Enabled:      true,

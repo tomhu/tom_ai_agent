@@ -183,6 +183,9 @@ func (r *Reporter) currentAssetID() string {
 	return r.assetID
 }
 
+// AssetID 当前身份（指令通道轮询用）。
+func (r *Reporter) AssetID() string { return r.currentAssetID() }
+
 // Stats 供自监控上报。
 func (r *Reporter) Stats() (depth, dropped uint64) {
 	r.mu.Lock()

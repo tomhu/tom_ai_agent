@@ -55,6 +55,11 @@ func (m *Module) loop(ctx context.Context) {
 	}
 }
 
+// Refresh 供平台指令（inventory.refresh 动作）即时触发全量上报。
+func (m *Module) Refresh(ctx context.Context) {
+	m.reportFull(ctx)
+}
+
 // reportFull 采集全量并提交可靠队列（WAL 先持久化）。
 func (m *Module) reportFull(ctx context.Context) {
 	r := m.collector.CollectFull(ctx)

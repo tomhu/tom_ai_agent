@@ -7,7 +7,7 @@ AIOps 主机智能代理（Host Agent）——单二进制 Linux 采集与受控
 - `docs/agent-design.md` — agent 设计（v0.2，架构基线）
 - `docs/platform-architecture.md` — 管控平台 > Gateway > Agent 三层总体架构（v0.3，含表结构）
 
-## 当前状态：M3 可靠性 + M2 注册/资产（agent 侧）
+## 当前状态：M4 指令执行器（agent 侧）
 
 - [x] Core 模块生命周期（优雅启停、信号处理）
 - [x] YAML 配置（零配置默认可启动）
@@ -23,9 +23,13 @@ AIOps 主机智能代理（Host Agent）——单二进制 Linux 采集与受控
 - [x] 进程信息：采集能力具备，上送默认关闭（缓建决策）
 - [x] 自监控指标：agent.uptime / rss / goroutines / buffer / wal.pending / degraded
 - [x] 麒麟 V10 x86_64 systemd 常驻验证（tomagent 低权运行，RSS ~9MB，CPU <1%）
+- [x] 指令执行器（M4）：动作目录（固定 argv 无 shell、参数值域校验）+ worker 池 4/队列 64
+- [x] 进程组隔离（Setpgid）+ 两段式查杀（SIGTERM→3s 宽限→SIGKILL 全组），超时上限封顶
+- [x] 输出截断（头 512K+尾 512K）、按 cmd_id 取消、结果走 WAL 可靠队列
+- [x] 指令通道：HTTP 长轮询（开发态；gRPC 控制流随 proto 冻结替换）
+- [x] M4 端到端麒麟实测 10/10：service_status / 超时查杀无残留 / 取消 / 策略拒绝 / 内部动作
 - [ ] gRPC 上行 + Protobuf（proto 冻结后）
-- [ ] 指令执行器（M4）
-- [ ] 安全体系：mTLS / 信封验签 / 动作目录 / cgroup 隔离（M5）
+- [ ] 安全体系：mTLS / 信封验签 / cgroup 隔离（M5）
 - [ ] Exec 插件（M7）
 
 ## 构建

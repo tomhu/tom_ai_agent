@@ -16,6 +16,7 @@ import (
 	"github.com/tomhu/tom_ai_agent/internal/collector"
 	"github.com/tomhu/tom_ai_agent/internal/config"
 	"github.com/tomhu/tom_ai_agent/internal/core"
+	"github.com/tomhu/tom_ai_agent/internal/executor"
 	"github.com/tomhu/tom_ai_agent/internal/inventory"
 	"github.com/tomhu/tom_ai_agent/internal/register"
 	"github.com/tomhu/tom_ai_agent/internal/reporter"
@@ -70,12 +71,33 @@ func main() {
 	// 核心调度：注册模块
 	app := core.New()
 	sched := collector.NewScheduler(cfg, rep)
+	inv := inventory.NewModule(&cfg.Inventory, rep)
+
+	startAt := time.Now()
+	hooks := &executor.Hooks{
+		AgentStatus: func(ctx context.Context, params map[string]string) (string, error) {
+			depth, dropped := rep.Stats()
+			return fmt.Sprintf("version=%s uptime=%.0fs degraded=%v buffer_depth=%d buffer_dropped=%d asset_id=%s",
+				version, time.Since(startAt).Seconds(), sched.Degraded(), depth, dropped, rep.AssetID()), nil
+		},
+		InventoryRefresh: func(ctx context.Context, params map[string]string) (string, error) {
+			inv.Refresh(ctx)
+			return "inventory full report triggered", nil
+		},
+		AllowTestActions: cfg.Executor.AllowTestActions,
+	}
+	engine := executor.NewEngine(&cfg.Executor, rep, hooks)
+
 	app.Add(register.New(cfg, rep.SetAssetID))
 	app.Add(rep)
 	app.Add(sched)
 	app.Add(watchdog.NewSelfMonitor(cfg, rep, sched, version))
 	app.Add(watchdog.NewSentinel(&cfg.Watchdog, sched, rep))
-	app.Add(inventory.NewModule(&cfg.Inventory, rep))
+	app.Add(inv)
+	if cfg.Executor.Enabled && cfg.Uplink.Mode == "http" {
+		app.Add(engine)
+		app.Add(executor.NewPoller(cfg, engine, rep.AssetID))
+	}
 
 	if err := app.Start(ctx); err != nil {
 		slog.Error("start modules", "err", err)
