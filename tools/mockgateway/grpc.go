@@ -3,15 +3,43 @@
 package main
 
 import (
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
 	"io"
 	"log"
+	"os"
 	"sync"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/peer"
 
 	agentv1 "github.com/tomhu/tom_ai_agent/internal/pb/agent/v1"
 )
+
+// serverMTLS 服务端双向认证：强制校验客户端证书（CN=asset_id 由控制流 Hello 复核）。
+func serverMTLS(caFile, certFile, keyFile string) (credentials.TransportCredentials, error) {
+	caPEM, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, err
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("ca file: no valid certificates")
+	}
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, err
+	}
+	return credentials.NewTLS(&tls.Config{
+		Certificates: []tls.Certificate{cert},
+		ClientCAs:    pool,
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		MinVersion:   tls.VersionTLS13,
+	}), nil
+}
 
 type gatewayServer struct {
 	agentv1.UnimplementedAgentGatewayServer
@@ -34,6 +62,17 @@ func (g *gatewayServer) Control(s agentv1.AgentGateway_ControlServer) error {
 		return grpc.ErrServerStopped
 	}
 	assetID := hello.AssetId
+	// mTLS 场景复核：客户端证书 CN 必须与 Hello 声称的 asset_id 一致
+	if p, ok := peer.FromContext(s.Context()); ok {
+		if ti, ok2 := p.AuthInfo.(credentials.TLSInfo); ok2 && len(ti.State.PeerCertificates) > 0 {
+			cn := ti.State.PeerCertificates[0].Subject.CommonName
+			if cn != assetID {
+				log.Printf("[grpc] REJECT asset=%s: cert CN mismatch (%s)", assetID, cn)
+				return fmt.Errorf("certificate CN %q != asset_id %q", cn, assetID)
+			}
+			log.Printf("[grpc] mTLS peer verified cn=%s", cn)
+		}
+	}
 	log.Printf("[grpc] hello asset=%s ver=%s catalog=%s", assetID, hello.AgentVersion, hello.ActionCatalogVersion)
 
 	if err := s.Send(&agentv1.GatewayControlFrame{Frame: &agentv1.GatewayControlFrame_Welcome{

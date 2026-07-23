@@ -101,12 +101,20 @@ func main() {
 		case "http":
 			app.Add(executor.NewPoller(cfg, engine, rep.AssetID))
 		case "grpc":
-			up := uplink.NewGRPC(cfg.Uplink.Addr, version, "v1", engine, rep.AssetID)
+			up, err := uplink.NewGRPC(&cfg.Uplink, version, "v1", engine, rep.AssetID)
+			if err != nil {
+				slog.Error("init grpc uplink", "err", err)
+				os.Exit(1)
+			}
 			rep.SetSink(up)
 			app.Add(up)
 		}
 	} else if cfg.Uplink.Mode == "grpc" {
-		up := uplink.NewGRPC(cfg.Uplink.Addr, version, "v1", nil, rep.AssetID)
+		up, err := uplink.NewGRPC(&cfg.Uplink, version, "v1", nil, rep.AssetID)
+		if err != nil {
+			slog.Error("init grpc uplink", "err", err)
+			os.Exit(1)
+		}
 		rep.SetSink(up)
 		app.Add(up)
 	}

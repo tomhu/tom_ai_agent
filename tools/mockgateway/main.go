@@ -234,6 +234,9 @@ func handler(w http.ResponseWriter, r *http.Request) {
 func main() {
 	listen := flag.String("listen", ":18080", "HTTP 监听地址")
 	grpcListen := flag.String("grpc", ":18081", "gRPC 监听地址")
+	tlsCA := flag.String("tls-ca", "", "mTLS 根 CA 证书（提供则启用双向认证）")
+	tlsCert := flag.String("tls-cert", "", "服务端证书")
+	tlsKey := flag.String("tls-key", "", "服务端私钥")
 	flag.Parse()
 
 	// gRPC 服务端（proto v1 三流）
@@ -242,7 +245,16 @@ func main() {
 		if err != nil {
 			log.Fatalf("grpc listen: %v", err)
 		}
-		gs := grpc.NewServer()
+		var opts []grpc.ServerOption
+		if *tlsCA != "" {
+			creds, err := serverMTLS(*tlsCA, *tlsCert, *tlsKey)
+			if err != nil {
+				log.Fatalf("mtls config: %v", err)
+			}
+			opts = append(opts, grpc.Creds(creds))
+			log.Printf("mTLS enabled (client cert required)")
+		}
+		gs := grpc.NewServer(opts...)
 		RegisterGRPC(gs)
 		log.Printf("mockgateway gRPC listening on %s", *grpcListen)
 		if err := gs.Serve(lis); err != nil {

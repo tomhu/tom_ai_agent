@@ -88,6 +88,11 @@ type UplinkConf struct {
 	Addr     string `yaml:"addr"`      // http: URL；grpc: host:port
 	HTTPAddr string `yaml:"http_addr"` // grpc 模式下注册引导的 HTTP 回退地址（M5b 切 gRPC Bootstrap）
 	Insecure bool   `yaml:"insecure"`  // grpc 明文（仅开发；M5b 后生产必须 false）
+	// mTLS（M5b）：三件套为空即不启用；身份注册落地后由 PKI 流程接管签发
+	CAFile     string `yaml:"ca_file"`     // 根 CA 证书（验证对端）
+	CertFile   string `yaml:"cert_file"`   // agent 客户端证书（CN=asset_id）
+	KeyFile    string `yaml:"key_file"`    // agent 客户端私钥
+	ServerName string `yaml:"server_name"` // 覆盖 TLS SNI/证书校验名（默认取 addr 主机名）
 }
 
 type CollectorConf struct {

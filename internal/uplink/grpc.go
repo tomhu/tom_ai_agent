@@ -13,17 +13,23 @@ package uplink
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
+	"os"
 	"sync"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/tomhu/tom_ai_agent/internal/config"
 	agentv1 "github.com/tomhu/tom_ai_agent/internal/pb/agent/v1"
 	"github.com/tomhu/tom_ai_agent/internal/reporter"
 )
@@ -41,6 +47,7 @@ type GRPCUplink struct {
 	catalogVer  string
 	handler     CommandHandler
 	assetIDFunc func() string
+	dialOpt     grpc.DialOption // insecure 或 mTLS credentials
 
 	connMu sync.Mutex
 	conn   *grpc.ClientConn
@@ -72,17 +79,59 @@ type reportWaiter struct {
 	ch   chan error
 }
 
-func NewGRPC(addr, agentVer, catalogVer string, h CommandHandler, assetID func() string) *GRPCUplink {
+// NewGRPC 构造 gRPC 上行。cfg 提供 mTLS 三件套时启用双向认证，否则按 insecure 明文（仅开发）。
+func NewGRPC(cfg *config.UplinkConf, agentVer, catalogVer string, h CommandHandler, assetID func() string) (*GRPCUplink, error) {
+	dialOpt, err := dialOption(cfg)
+	if err != nil {
+		return nil, err
+	}
 	return &GRPCUplink{
-		addr:        addr,
+		addr:        cfg.Addr,
 		agentVer:    agentVer,
 		catalogVer:  catalogVer,
 		handler:     h,
 		assetIDFunc: assetID,
+		dialOpt:     dialOpt,
 		metricOut:   make(chan *metricSend, 64),
 		reportOut:   make(chan *reportSend, 64),
 		ready:       make(chan struct{}),
+	}, nil
+}
+
+// dialOption 选择传输凭据：配置 CA 三件套 → mTLS；否则 insecure（开发）。
+func dialOption(cfg *config.UplinkConf) (grpc.DialOption, error) {
+	if cfg.CAFile == "" && cfg.CertFile == "" && cfg.KeyFile == "" {
+		if !cfg.Insecure {
+			return nil, errors.New("grpc uplink without mTLS requires uplink.insecure: true (dev only)")
+		}
+		return grpc.WithTransportCredentials(insecure.NewCredentials()), nil
 	}
+	caPEM, err := os.ReadFile(cfg.CAFile)
+	if err != nil {
+		return nil, fmt.Errorf("read ca_file: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("ca_file %s: no valid certificates", cfg.CAFile)
+	}
+	cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load client cert/key: %w", err)
+	}
+	serverName := cfg.ServerName
+	if serverName == "" {
+		host, _, err := net.SplitHostPort(cfg.Addr)
+		if err != nil {
+			return nil, fmt.Errorf("parse uplink.addr: %w", err)
+		}
+		serverName = host
+	}
+	return grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      pool,
+		ServerName:   serverName,
+		MinVersion:   tls.VersionTLS13, // Ed25519 + TLS1.3（信创基线）
+	})), nil
 }
 
 // Run 连接监督循环（core Module 语义：阻塞至 ctx 取消）。
@@ -118,7 +167,7 @@ func (u *GRPCUplink) session(ctx context.Context) error {
 	u.ready = make(chan struct{})
 	u.readyMu.Unlock()
 
-	conn, err := grpc.NewClient(u.addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(u.addr, u.dialOpt)
 	if err != nil {
 		return err
 	}
