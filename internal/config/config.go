@@ -53,6 +53,15 @@ type ExecutorConf struct {
 	AllowTestActions bool          `yaml:"allow_test_actions"` // 仅联调：test_sleep 等
 	// 信封验签（M5c）：配置后未签名/验签失败/重放信封一律 REJECTED_POLICY（fail-closed）
 	CommandPubkeyFile string `yaml:"command_pubkey_file"` // Ed25519 公钥（PKIX PEM）
+	// cgroup v2 执行隔离（M5d）：不可用时自动降级为仅进程组查杀
+	Cgroup CgroupConf `yaml:"cgroup"`
+}
+
+// CgroupConf cgroup v2 资源限值。
+type CgroupConf struct {
+	Enabled     bool `yaml:"enabled"`
+	MemoryMaxMB int  `yaml:"memory_max_mb"`  // 单指令内存上限（组内 OOM 查杀）
+	CPUQuotaPct int  `yaml:"cpu_quota_pct"`  // 单指令 CPU 上限（100=1 核）
 }
 
 // RegisterConf 注册引导（设计文档 §8.1）。
@@ -116,6 +125,7 @@ func Load(path string) (*Config, error) {
 			Enabled: true, Workers: 4, QueueSize: 64,
 			MaxTimeout: 300 * time.Second, KillGrace: 3 * time.Second,
 			OutputLimitKB: 1024,
+			Cgroup: CgroupConf{Enabled: true, MemoryMaxMB: 256, CPUQuotaPct: 100},
 		},
 		Register: RegisterConf{},
 		Inventory: InventoryConf{

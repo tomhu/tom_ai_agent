@@ -40,8 +40,6 @@ func TestCanonicalParamOrderIndependent(t *testing.T) {
 
 func TestVerifyRejectsTamper(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
-	env := testEnvelope()
-	Sign(priv, env)
 
 	cases := map[string]func(*agentv1.CommandEnvelope){
 		"action changed":  func(e *agentv1.CommandEnvelope) { e.Action = "diagnose.rm_rf" },
@@ -54,12 +52,10 @@ func TestVerifyRejectsTamper(t *testing.T) {
 		"sig missing":     func(e *agentv1.CommandEnvelope) { e.Signature = nil },
 	}
 	for name, tamper := range cases {
-		cp := *env
-		cp.Params = map[string]string{"service": "sshd", "b": "2", "a": "1"}
-		cp.Nonce = append([]byte(nil), env.Nonce...)
-		cp.Signature = append([]byte(nil), env.Signature...)
-		tamper(&cp)
-		if err := Verify(pub, &cp); err == nil {
+		cp := testEnvelope()
+		Sign(priv, cp)
+		tamper(cp)
+		if err := Verify(pub, cp); err == nil {
 			t.Errorf("%s: expected verify failure", name)
 		}
 	}

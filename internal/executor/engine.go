@@ -50,6 +50,7 @@ type Engine struct {
 
 	verifyKey ed25519.PublicKey // nil=开发态不验签；非 nil=fail-closed 验签
 	nonces    *authenv.NonceCache
+	cgroups   *cgroupManager
 
 	queue   chan Command
 	running sync.Map // cmd_id -> cancel context.CancelFunc
@@ -63,6 +64,11 @@ func NewEngine(cfg *config.ExecutorConf, rep *reporter.Reporter, h *Hooks) (*Eng
 		catalog: catalog(h),
 		queue:   make(chan Command, cfg.QueueSize),
 		nonces:  authenv.NewNonceCache(10000),
+		cgroups: newCgroupManager(cgroupConf{
+			Enabled:     cfg.Cgroup.Enabled,
+			MemoryMaxMB: cfg.Cgroup.MemoryMaxMB,
+			CPUQuotaPct: cfg.Cgroup.CPUQuotaPct,
+		}),
 	}
 	if cfg.CommandPubkeyFile != "" {
 		pub, err := authenv.LoadPublicKeyPEM(cfg.CommandPubkeyFile)
@@ -239,6 +245,9 @@ func (e *Engine) runExternal(ctx context.Context, cmd Command, a *Action) (*capp
 		return stdout, stderr, fmt.Errorf("start: %w", err)
 	}
 	pgid := c.Process.Pid
+	applyCgroup, cleanupCgroup := e.cgroups.confine(cmd.CmdID)
+	defer cleanupCgroup()
+	applyCgroup(pgid) // 子进程已 Setpgid，组内后续子孙继承该 cgroup
 
 	done := make(chan error, 1)
 	go func() { done <- c.Wait() }()
