@@ -1,0 +1,198 @@
+// agent.proto — agent ↔ Connector 协议冻结基线（platform-architecture.md §6.1）。
+// v1 冻结纪律：只增不改；字段号不复用；废弃用 reserved。
+syntax = "proto3";
+
+package tomai.agent.v1;
+
+option go_package = "github.com/tomhu/tom_ai_agent/internal/pb/agent/v1;agentv1";
+
+// ---------- 服务 ----------
+
+service AgentGateway {
+  // 控制流：agent 发 AgentControlFrame，收 GatewayControlFrame。
+  // 首帧必须 AgentHello，未完成握手不得发送指标与结果。
+  rpc Control(stream AgentControlFrame) returns (stream GatewayControlFrame);
+  // 指标流：双向流，逐批 ACK（agent 凭 ACK 推进内存缓冲/WAL 游标）。
+  rpc Metrics(stream MetricBatch) returns (stream MetricAck);
+  // 可靠流：结果/审计/inventory，平台持久化后才最终 ACK。
+  rpc Reports(stream ReliableReport) returns (stream ReportAck);
+}
+
+service AgentBootstrap {
+  // 注册：server-auth TLS + bootstrap token，幂等 enrollment_request_id。
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  // 证书轮换（M5b 启用）。
+  rpc RotateCertificate(RotateCertRequest) returns (RotateCertResponse);
+}
+
+// ---------- 指标流 ----------
+
+message Metric {
+  string metric = 1;
+  int64 timestamp = 2; // Unix 毫秒(UTC)
+  double value = 3;
+  map<string, string> labels = 4;
+}
+
+message MetricBatch {
+  string asset_id = 1;
+  int64 sent_at = 2;
+  uint64 sequence = 3;
+  repeated Metric samples = 4;
+}
+
+message MetricAck {
+  uint64 last_acked_sequence = 1;
+}
+
+// ---------- 可靠流 ----------
+
+enum ReportKind {
+  REPORT_KIND_UNSPECIFIED = 0;
+  REPORT_KIND_RESULTS = 1;
+  REPORT_KIND_AUDIT = 2;
+  REPORT_KIND_INVENTORY = 3;
+}
+
+message ReliableItem {
+  string id = 1; // cmd_id / event_id / report_id，平台按此去重
+  ReportKind kind = 2;
+  int64 created_at = 3;
+  bytes payload = 4; // JSON（proto 二期可换结构化）
+}
+
+message ReliableReport {
+  string asset_id = 1;
+  ReportKind kind = 2;
+  int64 sent_at = 3;
+  repeated ReliableItem items = 4;
+}
+
+message ReportAck {
+  ReportKind kind = 1;
+  repeated string acked_ids = 2; // 平台已持久化的条目
+}
+
+// ---------- 控制流 ----------
+
+message AgentControlFrame {
+  oneof frame {
+    AgentHello hello = 1;
+    Heartbeat heartbeat = 2;
+    CommandAck command_ack = 3;
+    CommandEvent command_event = 4;
+    ConfigApplyAck config_apply_ack = 5;
+    AgentEvent event = 6;
+  }
+}
+
+message GatewayControlFrame {
+  oneof frame {
+    GatewayWelcome welcome = 1;
+    CommandEnvelope command = 2;
+    CancelCommand cancel = 3;
+    ConfigPush config_push = 4;
+    ReconnectHint reconnect_hint = 5;
+    FenceNotice fence = 6;
+  }
+}
+
+message AgentHello {
+  string asset_id = 1;
+  string boot_id = 2;
+  string agent_version = 3;
+  uint32 protocol_min_version = 4;
+  uint32 protocol_max_version = 5;
+  string action_catalog_version = 6;
+  string current_config_version = 7;
+}
+
+message GatewayWelcome {
+  string session_id = 1;
+  uint64 session_epoch = 2;
+  int64 server_time = 3;
+  uint32 heartbeat_interval_sec = 4;
+  uint32 max_inflight_reports = 5;
+  string target_config_version = 6;
+}
+
+message Heartbeat {
+  int64 sent_at = 1;
+}
+
+// 指令信封：签名在投递时由平台 Signer 完成（M5c 验签启用）。
+message CommandEnvelope {
+  string cmd_id = 1;
+  string action = 2;
+  map<string, string> params = 3;
+  uint32 timeout_sec = 4;
+  int64 issued_at = 5;
+  int64 expires_at = 6;
+  bytes nonce = 7;
+  bytes signature = 8; // Ed25519(以上字段规范序列化)，空=开发态不验签
+}
+
+message CancelCommand {
+  string cmd_id = 1;
+}
+
+message CommandAck {
+  string cmd_id = 1;
+  bool accepted = 2;
+  string reject_reason = 3; // REJECTED_BUSY / REJECTED_POLICY / ...
+}
+
+message CommandEvent {
+  string cmd_id = 1;
+  string state = 2; // running / finished
+  string detail = 3;
+}
+
+message ConfigPush {
+  string config_version = 1;
+  bytes signed_config = 2;
+}
+
+message ConfigApplyAck {
+  string config_version = 1;
+  bool applied = 2;
+  string error = 3;
+}
+
+message ReconnectHint {
+  uint32 reconnect_after_sec = 1;
+}
+
+message FenceNotice {
+  uint64 session_epoch = 1;
+  string reason = 2;
+}
+
+message AgentEvent {
+  string event_type = 1;
+  int64 occurred_at = 2;
+  map<string, string> attributes = 3;
+}
+
+// ---------- 注册 ----------
+
+message RegisterRequest {
+  string enrollment_request_id = 1; // 幂等键
+  string bootstrap_token = 2;
+  map<string, string> materials = 3; // machine_id/hostname/kernel/arch/os
+}
+
+message RegisterResponse {
+  string asset_id = 1;
+  string gateway_addr = 2;
+}
+
+message RotateCertRequest {
+  string asset_id = 1;
+  bytes csr_der = 2;
+}
+
+message RotateCertResponse {
+  bytes certificate_der = 1;
+  int64 not_after = 2;
+}

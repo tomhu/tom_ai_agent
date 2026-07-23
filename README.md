@@ -28,8 +28,11 @@ AIOps 主机智能代理（Host Agent）——单二进制 Linux 采集与受控
 - [x] 输出截断（头 512K+尾 512K）、按 cmd_id 取消、结果走 WAL 可靠队列
 - [x] 指令通道：HTTP 长轮询（开发态；gRPC 控制流随 proto 冻结替换）
 - [x] M4 端到端麒麟实测 10/10：service_status / 超时查杀无残留 / 取消 / 策略拒绝 / 内部动作
-- [ ] gRPC 上行 + Protobuf（proto 冻结后）
-- [ ] 安全体系：mTLS / 信封验签 / cgroup 隔离（M5）
+- [x] proto v1 冻结（`proto/agent/v1/agent.proto`：Control/Metrics/Reports 三流 + Bootstrap）
+- [x] gRPC 上行（M5a）：Hello/Welcome 握手、流式 ACK（MetricAck 推进缓冲 / ReportAck 全覆盖推进 WAL）、断线 waiter 即时失败 + 退避重连、指令信封经控制流下推（替代 HTTP 长轮询）
+- [ ] mTLS + 自研 PKI 开发 CA（M5b）
+- [ ] 信封 Ed25519 验签 + nonce 防重放（M5c）
+- [ ] cgroup v2 执行隔离（M5d）
 - [ ] Exec 插件（M7）
 
 ## 构建

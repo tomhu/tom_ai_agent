@@ -20,6 +20,7 @@ import (
 	"github.com/tomhu/tom_ai_agent/internal/inventory"
 	"github.com/tomhu/tom_ai_agent/internal/register"
 	"github.com/tomhu/tom_ai_agent/internal/reporter"
+	"github.com/tomhu/tom_ai_agent/internal/uplink"
 	"github.com/tomhu/tom_ai_agent/internal/watchdog"
 )
 
@@ -94,9 +95,20 @@ func main() {
 	app.Add(watchdog.NewSelfMonitor(cfg, rep, sched, version))
 	app.Add(watchdog.NewSentinel(&cfg.Watchdog, sched, rep))
 	app.Add(inv)
-	if cfg.Executor.Enabled && cfg.Uplink.Mode == "http" {
+	if cfg.Executor.Enabled {
 		app.Add(engine)
-		app.Add(executor.NewPoller(cfg, engine, rep.AssetID))
+		switch cfg.Uplink.Mode {
+		case "http":
+			app.Add(executor.NewPoller(cfg, engine, rep.AssetID))
+		case "grpc":
+			up := uplink.NewGRPC(cfg.Uplink.Addr, version, "v1", engine, rep.AssetID)
+			rep.SetSink(up)
+			app.Add(up)
+		}
+	} else if cfg.Uplink.Mode == "grpc" {
+		up := uplink.NewGRPC(cfg.Uplink.Addr, version, "v1", nil, rep.AssetID)
+		rep.SetSink(up)
+		app.Add(up)
 	}
 
 	if err := app.Start(ctx); err != nil {

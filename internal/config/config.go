@@ -84,8 +84,10 @@ type AgentConf struct {
 }
 
 type UplinkConf struct {
-	Mode string `yaml:"mode"` // stdout | http （gRPC 在 proto 冻结后接入）
-	Addr string `yaml:"addr"` // http 模式的目标 URL（开发用模拟网关）
+	Mode     string `yaml:"mode"`      // stdout | http | grpc
+	Addr     string `yaml:"addr"`      // http: URL；grpc: host:port
+	HTTPAddr string `yaml:"http_addr"` // grpc 模式下注册引导的 HTTP 回退地址（M5b 切 gRPC Bootstrap）
+	Insecure bool   `yaml:"insecure"`  // grpc 明文（仅开发；M5b 后生产必须 false）
 }
 
 type CollectorConf struct {

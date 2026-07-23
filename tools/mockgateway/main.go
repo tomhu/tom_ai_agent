@@ -10,10 +10,13 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"google.golang.org/grpc"
 )
 
 var counters = map[string]*atomic.Uint64{
@@ -229,8 +232,23 @@ func handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	listen := flag.String("listen", ":18080", "监听地址")
+	listen := flag.String("listen", ":18080", "HTTP 监听地址")
+	grpcListen := flag.String("grpc", ":18081", "gRPC 监听地址")
 	flag.Parse()
+
+	// gRPC 服务端（proto v1 三流）
+	go func() {
+		lis, err := net.Listen("tcp", *grpcListen)
+		if err != nil {
+			log.Fatalf("grpc listen: %v", err)
+		}
+		gs := grpc.NewServer()
+		RegisterGRPC(gs)
+		log.Printf("mockgateway gRPC listening on %s", *grpcListen)
+		if err := gs.Serve(lis); err != nil {
+			log.Fatalf("grpc serve: %v", err)
+		}
+	}()
 
 	http.HandleFunc("/v1/metrics", handler)
 	http.HandleFunc("/v1/results", resultsHandler)

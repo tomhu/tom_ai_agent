@@ -5,8 +5,10 @@ agent:
   asset_id: ""             # M2 注册流程签发；当前可手工指定便于联调
 
 uplink:
-  mode: stdout             # stdout | http （grpc 待 proto 冻结后接入）
-  addr: ""                 # mode=http 时必填，如 http://192.168.70.1:18080
+  mode: stdout             # stdout | http | grpc
+  addr: ""                 # http: URL（如 http://192.168.70.1:18080）；grpc: host:port（如 192.168.70.1:18081）
+  http_addr: ""            # grpc 模式下注册引导 HTTP 回退（M5b 切 gRPC Bootstrap 后废弃）
+  insecure: false          # grpc 明文仅限开发；生产必须 mTLS（M5b）
 
 collectors:
   cpu:     { enabled: true, interval: 10s }

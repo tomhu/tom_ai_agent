@@ -98,6 +98,8 @@ func New(cfg *config.Config) (*Reporter, error) {
 			return nil, fmt.Errorf("uplink.addr required when mode=http")
 		}
 		sink = &httpSink{base: cfg.Uplink.Addr, client: &http.Client{Timeout: 10 * time.Second}}
+	case "grpc":
+		sink = nil // 由 main 构建 uplink 后 SetSink 注入
 	default:
 		return nil, fmt.Errorf("unknown uplink.mode: %s", cfg.Uplink.Mode)
 	}
@@ -137,6 +139,9 @@ func New(cfg *config.Config) (*Reporter, error) {
 }
 
 func (r *Reporter) Name() string { return "reporter" }
+
+// SetSink 注入发送目标（gRPC 模式：由 uplink 实现 Sink，main 在 Start 前注入）。
+func (r *Reporter) SetSink(s Sink) { r.sink = s }
 
 // Submit 指标入口（metrics 队列，可丢弃）。
 func (r *Reporter) Submit(metrics []collector.Metric) {
