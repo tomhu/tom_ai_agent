@@ -30,9 +30,10 @@ AIOps 主机智能代理（Host Agent）——单二进制 Linux 采集与受控
 - [x] M4 端到端麒麟实测 10/10：service_status / 超时查杀无残留 / 取消 / 策略拒绝 / 内部动作
 - [x] proto v1 冻结（`proto/agent/v1/agent.proto`：Control/Metrics/Reports 三流 + Bootstrap）
 - [x] gRPC 上行（M5a）：Hello/Welcome 握手、流式 ACK（MetricAck 推进缓冲 / ReportAck 全覆盖推进 WAL）、断线 waiter 即时失败 + 退避重连、指令信封经控制流下推（替代 HTTP 长轮询）
-- [ ] mTLS + 自研 PKI 开发 CA（M5b）
-- [ ] 信封 Ed25519 验签 + nonce 防重放（M5c）
-- [ ] cgroup v2 执行隔离（M5d）
+- [x] mTLS（M5b）：自研 dev PKI（Ed25519，tools/devca）、TLS1.3 双向认证、网关强制客户端证书 CN=asset_id 复核（本机 probe 正/反测试通过）
+- [x] 信封验签（M5c）：规范序列化 + Ed25519 签名 + nonce 防重放，agent fail-closed（authenv 单测：篡改 8 种场景全拒）
+- [x] cgroup v2 执行隔离（M5d）：memory.max/cpu.max 单指令限额，不可用时降级进程组查杀
+- [ ] M5 全栈麒麟 E2E（gRPC+mTLS+签名，待 VM 恢复）
 - [ ] Exec 插件（M7）
 
 ## 构建
