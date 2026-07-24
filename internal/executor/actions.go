@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // Action 动作定义。两种实现：固定 argv 外部命令 / 内部 Go 函数。
@@ -21,6 +22,8 @@ type Action struct {
 	Args   []string
 	// Func 内部动作（不 fork 外部进程）
 	Func func(ctx context.Context, params map[string]string) (string, error)
+	// PluginTO 插件动作的自身超时上限（0=仅受引擎 max_timeout 约束）
+	PluginTO time.Duration
 }
 
 var (

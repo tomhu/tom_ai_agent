@@ -55,6 +55,8 @@ type ExecutorConf struct {
 	CommandPubkeyFile string `yaml:"command_pubkey_file"` // Ed25519 公钥（PKIX PEM）
 	// cgroup v2 执行隔离（M5d）：不可用时自动降级为仅进程组查杀
 	Cgroup CgroupConf `yaml:"cgroup"`
+	// Exec 插件目录（M7）：空=不装载
+	PluginDir string `yaml:"plugin_dir"`
 }
 
 // CgroupConf cgroup v2 资源限值。
@@ -125,7 +127,8 @@ func Load(path string) (*Config, error) {
 			Enabled: true, Workers: 4, QueueSize: 64,
 			MaxTimeout: 300 * time.Second, KillGrace: 3 * time.Second,
 			OutputLimitKB: 1024,
-			Cgroup: CgroupConf{Enabled: true, MemoryMaxMB: 256, CPUQuotaPct: 100},
+			Cgroup:    CgroupConf{Enabled: true, MemoryMaxMB: 256, CPUQuotaPct: 100},
+			PluginDir: "/usr/libexec/tom_ai_agent/plugins",
 		},
 		Register: RegisterConf{},
 		Inventory: InventoryConf{

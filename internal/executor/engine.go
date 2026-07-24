@@ -128,6 +128,17 @@ func (e *Engine) Cancel(cmdID string) {
 	}
 }
 
+// AddActions 注册额外动作（Exec 插件等，Start 前调用）。ID 冲突拒绝并记 ERROR。
+func (e *Engine) AddActions(acts []*Action) {
+	for _, a := range acts {
+		if _, dup := e.catalog[a.ID]; dup {
+			slog.Error("action id conflict, skipped", "id", a.ID)
+			continue
+		}
+		e.catalog[a.ID] = a
+	}
+}
+
 // Stats 自监控。
 func (e *Engine) Stats() (running, queued int) {
 	n := 0
@@ -167,6 +178,9 @@ func (e *Engine) execute(parent context.Context, cmd Command) {
 	maxTimeout := e.cfg.MaxTimeout
 	if maxTimeout <= 0 {
 		maxTimeout = 300 * time.Second
+	}
+	if a.PluginTO > 0 && a.PluginTO < maxTimeout {
+		maxTimeout = a.PluginTO // 插件自身超时上限更严时从严
 	}
 	if timeout <= 0 || timeout > maxTimeout {
 		timeout = maxTimeout // 平台超时不被信任为无上限

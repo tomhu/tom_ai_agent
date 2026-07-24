@@ -18,6 +18,7 @@ import (
 	"github.com/tomhu/tom_ai_agent/internal/core"
 	"github.com/tomhu/tom_ai_agent/internal/executor"
 	"github.com/tomhu/tom_ai_agent/internal/inventory"
+	"github.com/tomhu/tom_ai_agent/internal/plugin"
 	"github.com/tomhu/tom_ai_agent/internal/register"
 	"github.com/tomhu/tom_ai_agent/internal/reporter"
 	"github.com/tomhu/tom_ai_agent/internal/uplink"
@@ -91,6 +92,9 @@ func main() {
 	if err != nil {
 		slog.Error("init executor", "err", err)
 		os.Exit(1)
+	}
+	if cfg.Executor.PluginDir != "" {
+		engine.AddActions(plugin.LoadDir(cfg.Executor.PluginDir))
 	}
 
 	app.Add(register.New(cfg, rep.SetAssetID))

@@ -1,0 +1,15 @@
+name: demo-sysinfo
+version: 0.1.0
+actions:
+  - id: summary
+    risk: low
+    exec: ./summary.sh
+    args: []
+    max_timeout: 30s
+    output: result
+  - id: slow
+    risk: low
+    exec: ./slow.sh
+    args: []
+    max_timeout: 5s
+    output: result
