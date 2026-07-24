@@ -26,6 +26,8 @@ VM_IP = os.environ.get("VM_IP", "172.19.170.178")
 USER, PASS = "tom", "Peter2026@"
 GW = os.environ.get("GW", "http://localhost:18080")
 GW_HOST = os.environ.get("GW_HOST", "172.18.32.1")  # VM 视角的宿主网关地址（Default Switch 重启会变）
+GRPC_PORT = os.environ.get("GRPC_PORT", "18081")     # 18081=mockgateway, 18091=connector
+HTTP_PORT = os.environ.get("HTTP_PORT", "18080")     # 18080=mockgateway, 18090=connector admin
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 DIST = os.path.join(ROOT, "dist", "tom_ai_agent")
 PKI = os.path.join(ROOT, "pki", "dev")
@@ -81,8 +83,8 @@ CONFIG_TEMPLATE = """agent:
 
 uplink:
   mode: grpc
-  addr: GW_HOST_PLACEHOLDER:18081
-  http_addr: http://GW_HOST_PLACEHOLDER:18080
+  addr: GW_HOST_PLACEHOLDER:GRPC_PORT_PH
+  http_addr: http://GW_HOST_PLACEHOLDER:HTTP_PORT_PH
   ca_file: /etc/tom_ai_agent/pki/ca.crt
   cert_file: /etc/tom_ai_agent/pki/agent.crt
   key_file: /etc/tom_ai_agent/pki/agent.key
@@ -118,7 +120,8 @@ executor:
   command_pubkey_file: /etc/tom_ai_agent/pki/signer.pub
   cgroup: { enabled: true, memory_max_mb: 256, cpu_quota_pct: 100 }
 """
-CONFIG = CONFIG_TEMPLATE.replace("GW_HOST_PLACEHOLDER", GW_HOST)
+CONFIG = (CONFIG_TEMPLATE.replace("GW_HOST_PLACEHOLDER", GW_HOST)
+          .replace("GRPC_PORT_PH", GRPC_PORT).replace("HTTP_PORT_PH", HTTP_PORT))
 
 
 def main():
