@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS register.agent_certificate (
     issuer_id          VARCHAR(64) NOT NULL DEFAULT 'dev-root-ca',
     not_before         TIMESTAMPTZ NOT NULL,
     not_after          TIMESTAMPTZ NOT NULL,
-    status             VARCHAR(16) NOT NULL DEFAULT 'active', -- active/revoked/expired
+    status             VARCHAR(16) NOT NULL DEFAULT 'active', -- active/superseded/revoked/expired
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_cert_asset ON register.agent_certificate(asset_id, status);

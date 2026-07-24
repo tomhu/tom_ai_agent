@@ -1,6 +1,7 @@
 // bootstrap.go — AgentBootstrap gRPC 服务（P1，platform-architecture.md §6.1）。
 // Register：server-auth TLS + bootstrap token 认证，幂等 enrollment_request_id；
 // 校验 CSR 后由平台 CA 签发客户端证书（CN 强制改写为 asset_id，私钥永不离 agent）。
+// RotateCertificate（M5b）：挂 mTLS 接入 server，peer 证书 CN 复核后换发新证书。
 // 台账：register.enrollment（幂等）+ register.agent_certificate（证书账本），见 db/ddl/001_core.sql。
 package connector
 
@@ -13,12 +14,15 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
 	"time"
 
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
 	agentv1 "github.com/tomhu/tom_ai_agent/internal/pb/agent/v1"
@@ -78,19 +82,9 @@ func (b *BootstrapServer) Register(ctx context.Context, req *agentv1.RegisterReq
 	}
 
 	// CSR 校验（v1.1 起必须携带；CN 忽略，平台强制改写为 asset_id）
-	if len(req.CsrDer) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "csr_der required (proto v1.1)")
-	}
-	csr, err := x509.ParseCertificateRequest(req.CsrDer)
+	pub, err := parseCSR(req.CsrDer)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "parse csr: %v", err)
-	}
-	if err := csr.CheckSignature(); err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "csr signature invalid: %v", err)
-	}
-	pub, ok := csr.PublicKey.(ed25519.PublicKey)
-	if !ok {
-		return nil, status.Error(codes.InvalidArgument, "only Ed25519 CSR keys accepted")
+		return nil, err
 	}
 	pubHash := sha256.Sum256(pub)
 	// asset_id 由平台签发：绑定 CSR 公钥哈希（同 key 重注册得到同一身份）
@@ -125,9 +119,64 @@ func (b *BootstrapServer) Register(ctx context.Context, req *agentv1.RegisterReq
 	}, nil
 }
 
-// RotateCertificate 证书轮换（P1 缓建：待 mTLS 身份复核接入后启用）。
+// RotateCertificate 证书轮换（M5b）：挂 mTLS 接入 server，强身份复核——
+// peer 客户端证书 CN 必须 == req.AssetId；校验新 CSR 后签发新证书，
+// 台账单事务将该 asset 旧 active 证书置 superseded、插入新 active 行。
 func (b *BootstrapServer) RotateCertificate(ctx context.Context, req *agentv1.RotateCertRequest) (*agentv1.RotateCertResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "certificate rotation deferred (post-P1)")
+	if req.AssetId == "" {
+		return nil, status.Error(codes.InvalidArgument, "asset_id required")
+	}
+	// 强身份复核：必须以当前有效客户端证书接入，且 CN 与声称的 asset_id 一致
+	p, ok := peer.FromContext(ctx)
+	if !ok {
+		return nil, status.Error(codes.Unauthenticated, "client certificate required")
+	}
+	ti, ok := p.AuthInfo.(credentials.TLSInfo)
+	if !ok || len(ti.State.PeerCertificates) == 0 {
+		return nil, status.Error(codes.Unauthenticated, "client certificate required")
+	}
+	if cn := ti.State.PeerCertificates[0].Subject.CommonName; cn != req.AssetId {
+		slog.Warn("rotate rejected: CN mismatch", "peer_cn", cn, "asset_id", req.AssetId)
+		return nil, status.Error(codes.Unauthenticated, "client certificate CN mismatch")
+	}
+
+	pub, err := parseCSR(req.CsrDer)
+	if err != nil {
+		return nil, err
+	}
+	certDER, serial, fingerprint, notBefore, notAfter, err := b.sign(pub, req.AssetId)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "sign certificate: %v", err)
+	}
+	if err := b.store.RotateCertificateTx(ctx, req.AssetId, serial, fingerprint, notBefore, notAfter); err != nil {
+		if errors.Is(err, platform.ErrNotFound) {
+			return nil, status.Error(codes.FailedPrecondition, "asset not enrolled")
+		}
+		return nil, status.Errorf(codes.Internal, "rotate ledger: %v", err)
+	}
+
+	slog.Info("certificate rotated", "asset_id", req.AssetId, "serial", serial,
+		"not_after", notAfter.Format(time.RFC3339))
+	return &agentv1.RotateCertResponse{CertificateDer: certDER, NotAfter: notAfter.Unix()}, nil
+}
+
+// parseCSR 解析并校验 CSR：签名有效且公钥必须 Ed25519（Register/Rotate 共用）。
+func parseCSR(der []byte) (ed25519.PublicKey, error) {
+	if len(der) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "csr_der required (proto v1.1)")
+	}
+	csr, err := x509.ParseCertificateRequest(der)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "parse csr: %v", err)
+	}
+	if err := csr.CheckSignature(); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "csr signature invalid: %v", err)
+	}
+	pub, ok := csr.PublicKey.(ed25519.PublicKey)
+	if !ok {
+		return nil, status.Error(codes.InvalidArgument, "only Ed25519 CSR keys accepted")
+	}
+	return pub, nil
 }
 
 // sign 用平台 CA 签发客户端证书：CN=asset_id，ClientAuth，Ed25519。

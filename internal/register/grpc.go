@@ -14,6 +14,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"time"
@@ -54,6 +55,10 @@ func (m *Module) PKIPaths() *PKIPaths {
 func (m *Module) EnsureIdentity(ctx context.Context) error {
 	if id := m.LoadIdentity(); id != nil && m.PKIPaths() != nil {
 		slog.Info("identity restored", "asset_id", id.AssetID)
+		// 证书临期轮换检查（fail-open：失败仅告警，不阻断启动）
+		rotCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		_ = m.MaybeRotate(rotCtx)
+		cancel()
 		m.onReady(id.AssetID)
 		return nil
 	}
@@ -64,9 +69,10 @@ func (m *Module) EnsureIdentity(ctx context.Context) error {
 	enrollID := newEnrollmentID()
 	backoff := 5 * time.Second
 	for {
-		assetID, err := m.doRegisterGRPC(ctx, token, enrollID)
+		assetID, notAfter, err := m.doRegisterGRPC(ctx, token, enrollID)
 		if err == nil {
-			id := &Identity{AssetID: assetID, EnrollmentRequestID: enrollID, RegisteredAt: time.Now().UnixMilli()}
+			id := &Identity{AssetID: assetID, EnrollmentRequestID: enrollID,
+				RegisteredAt: time.Now().UnixMilli(), CertNotAfter: notAfter}
 			if err := m.saveIdentity(id); err != nil {
 				return fmt.Errorf("save identity: %w", err)
 			}
@@ -87,28 +93,22 @@ func (m *Module) EnsureIdentity(ctx context.Context) error {
 }
 
 // doRegisterGRPC 单次 gRPC 注册尝试：密钥对+CSR → Register → 证书三件套落盘。
-func (m *Module) doRegisterGRPC(ctx context.Context, token, enrollID string) (string, error) {
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
+// 返回 asset_id 与证书到期时间（Unix 秒，写入 identity 驱动轮换）。
+func (m *Module) doRegisterGRPC(ctx context.Context, token, enrollID string) (string, int64, error) {
+	priv, csrDER, err := newKeyAndCSR("pending-" + enrollID[:8]) // 平台强制改写 CN=asset_id
 	if err != nil {
-		return "", err
-	}
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
-		Subject:            pkix.Name{CommonName: "pending-" + enrollID[:8]}, // 平台强制改写 CN=asset_id
-		SignatureAlgorithm: x509.PureEd25519,
-	}, priv)
-	if err != nil {
-		return "", fmt.Errorf("create csr: %w", err)
+		return "", 0, err
 	}
 
 	tlsConf := &tls.Config{MinVersion: tls.VersionTLS13}
 	if caFile := m.cfg.Register.BootstrapCAFile; caFile != "" {
 		caPEM, err := os.ReadFile(caFile)
 		if err != nil {
-			return "", fmt.Errorf("read bootstrap ca: %w", err)
+			return "", 0, fmt.Errorf("read bootstrap ca: %w", err)
 		}
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(caPEM) {
-			return "", fmt.Errorf("bootstrap ca file: no valid certificates")
+			return "", 0, fmt.Errorf("bootstrap ca file: no valid certificates")
 		}
 		tlsConf.RootCAs = pool
 		tlsConf.ServerName = m.cfg.Uplink.ServerName
@@ -122,7 +122,7 @@ func (m *Module) doRegisterGRPC(ctx context.Context, token, enrollID string) (st
 	conn, err := grpc.DialContext(dialCtx, m.cfg.Register.BootstrapAddr,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsConf)), grpc.WithBlock())
 	if err != nil {
-		return "", fmt.Errorf("dial bootstrap: %w", err)
+		return "", 0, fmt.Errorf("dial bootstrap: %w", err)
 	}
 	defer conn.Close()
 
@@ -133,18 +133,129 @@ func (m *Module) doRegisterGRPC(ctx context.Context, token, enrollID string) (st
 		CsrDer:              csrDER,
 	})
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	if resp.AssetId == "" || len(resp.CertificateDer) == 0 || len(resp.CaDer) == 0 {
-		return "", fmt.Errorf("incomplete register response (asset_id/cert/ca)")
+		return "", 0, fmt.Errorf("incomplete register response (asset_id/cert/ca)")
 	}
 
 	if err := m.persistPKI(priv, resp.CertificateDer, resp.CaDer); err != nil {
-		return "", fmt.Errorf("persist pki: %w", err)
+		return "", 0, fmt.Errorf("persist pki: %w", err)
 	}
 	slog.Info("certificate issued", "asset_id", resp.AssetId,
 		"not_after", time.Unix(resp.NotAfter, 0).Format(time.RFC3339))
-	return resp.AssetId, nil
+	return resp.AssetId, resp.NotAfter, nil
+}
+
+// MaybeRotate 证书临期自动轮换（M5b）：identity 记录的 cert_not_after 剩余不足
+// register.rotate_before_days（缺省 30 天）时，用当前有效客户端证书走 mTLS
+// 向接入地址上的 AgentBootstrap 换新证书。fail-open：任何失败仅告警返回 nil。
+func (m *Module) MaybeRotate(ctx context.Context) error {
+	id := m.LoadIdentity()
+	if id == nil || id.CertNotAfter <= 0 {
+		return nil // 无到期信息（HTTP 回退注册路径）：不轮换
+	}
+	pki := m.PKIPaths()
+	if pki == nil {
+		return nil
+	}
+	beforeDays := m.cfg.Register.RotateBeforeDays
+	if beforeDays <= 0 {
+		beforeDays = 30
+	}
+	remaining := time.Until(time.Unix(id.CertNotAfter, 0))
+	if remaining > time.Duration(beforeDays)*24*time.Hour {
+		return nil // 未到轮换窗口
+	}
+	if err := m.rotate(ctx, id, pki); err != nil {
+		slog.Warn("certificate rotation failed (fail-open, old cert still valid)",
+			"asset_id", id.AssetID, "err", err)
+	}
+	return nil
+}
+
+// rotate 执行一次轮换：新密钥对+CSR → mTLS RotateCertificate → 三件套落盘（ca.crt 不变）→ identity 更新。
+func (m *Module) rotate(ctx context.Context, id *Identity, pki *PKIPaths) error {
+	priv, csrDER, err := newKeyAndCSR("rotate-" + id.AssetID) // CN 仅占位，平台强制改写
+	if err != nil {
+		return err
+	}
+	// mTLS 凭据：当前有效客户端证书 + 本地 CA（参照 uplink dialOption）
+	cert, err := tls.LoadX509KeyPair(pki.Cert, pki.Key)
+	if err != nil {
+		return fmt.Errorf("load client cert/key: %w", err)
+	}
+	caPEM, err := os.ReadFile(pki.CA)
+	if err != nil {
+		return fmt.Errorf("read ca: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return fmt.Errorf("ca file: no valid certificates")
+	}
+	caBlock, _ := pem.Decode(caPEM)
+	if caBlock == nil {
+		return fmt.Errorf("ca file: no PEM block")
+	}
+	serverName := m.cfg.Uplink.ServerName
+	if serverName == "" {
+		host, _, err := net.SplitHostPort(m.cfg.Uplink.Addr)
+		if err != nil {
+			return fmt.Errorf("parse uplink.addr: %w", err)
+		}
+		serverName = host
+	}
+
+	dialCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	conn, err := grpc.DialContext(dialCtx, m.cfg.Uplink.Addr,
+		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
+			Certificates: []tls.Certificate{cert},
+			RootCAs:      pool,
+			ServerName:   serverName,
+			MinVersion:   tls.VersionTLS13, // Ed25519 + TLS1.3（信创基线）
+		})), grpc.WithBlock())
+	if err != nil {
+		return fmt.Errorf("dial gateway: %w", err)
+	}
+	defer conn.Close()
+
+	resp, err := agentv1.NewAgentBootstrapClient(conn).RotateCertificate(dialCtx, &agentv1.RotateCertRequest{
+		AssetId: id.AssetID, CsrDer: csrDER,
+	})
+	if err != nil {
+		return fmt.Errorf("rotate rpc: %w", err)
+	}
+	if len(resp.CertificateDer) == 0 || resp.NotAfter <= 0 {
+		return fmt.Errorf("incomplete rotate response")
+	}
+
+	if err := m.persistPKI(priv, resp.CertificateDer, caBlock.Bytes); err != nil {
+		return fmt.Errorf("persist pki: %w", err)
+	}
+	id.CertNotAfter = resp.NotAfter
+	if err := m.saveIdentity(id); err != nil {
+		return fmt.Errorf("save identity: %w", err)
+	}
+	slog.Info("certificate rotated", "asset_id", id.AssetID,
+		"not_after", time.Unix(resp.NotAfter, 0).Format(time.RFC3339))
+	return nil
+}
+
+// newKeyAndCSR 生成 Ed25519 密钥对与 PKCS#10 CSR（注册/轮换共用；CN 仅占位，平台强制改写为 asset_id）。
+func newKeyAndCSR(cn string) (ed25519.PrivateKey, []byte, error) {
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, nil, err
+	}
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject:            pkix.Name{CommonName: cn},
+		SignatureAlgorithm: x509.PureEd25519,
+	}, priv)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create csr: %w", err)
+	}
+	return priv, csrDER, nil
 }
 
 // persistPKI 原子落盘：agent.key(0600) / agent.crt / ca.crt。先写临时文件再 rename。

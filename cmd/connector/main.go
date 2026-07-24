@@ -22,6 +22,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc"
@@ -63,6 +64,7 @@ func main() {
 	caKeyFile := flag.String("ca-key", "", "CA 私钥（PKCS8 PEM，注册签发用）")
 	bootstrapToken := flag.String("bootstrap-token", "", "注册引导 token")
 	gatewayAddr := flag.String("gateway-addr", "", "回给 agent 的接入地址（信息性，默认取 -grpc）")
+	kafkaBrokers := flag.String("kafka-brokers", "", "Kafka broker 列表（逗号分隔；空=仅日志 Sink）")
 	flag.Parse()
 
 	// 持久化（可选）：启用后指令走 cmd.command/event/outbox 状态机
@@ -78,10 +80,44 @@ func main() {
 	}
 
 	signer := loadSigner(*signKey)
-	srv := connector.NewServer(signer, logSink{})
+	// 数据出口：默认日志；配置 Kafka 后扇出（Kafka 失败向上传播 → agent 保 WAL 重发）
+	var sink connector.Sink = logSink{}
+	if *kafkaBrokers != "" {
+		ks, err := connector.NewKafkaSink(splitTrim(*kafkaBrokers))
+		if err != nil {
+			log.Fatalf("kafka sink: %v", err)
+		}
+		defer ks.Close()
+		sink = connector.MultiSink{Sinks: []connector.Sink{logSink{}, ks}}
+		log.Printf("kafka sink enabled (brokers=%s)", *kafkaBrokers)
+	}
+	srv := connector.NewServer(signer, sink)
 	if store != nil {
 		srv.SetStore(store)
 		go outboxDispatcher(store, srv)
+	}
+
+	// 注册服务：-dsn/-ca-key/-bootstrap-token 齐备即创建。
+	// 同时挂到 mTLS 接入 server（RotateCertificate 凭 peer 客户端证书强身份复核）；
+	// -bootstrap-grpc 非空时另起 server-auth TLS 监听（agent 首启 Register，凭 token 认证）。
+	var bs *connector.BootstrapServer
+	if store != nil && *caKeyFile != "" && *bootstrapToken != "" {
+		caCert, caDER, err := loadCACert(*tlsCA)
+		if err != nil {
+			log.Fatalf("load ca cert: %v", err)
+		}
+		caKey, err := authenv.LoadPrivateKeyPEM(*caKeyFile)
+		if err != nil {
+			log.Fatalf("load ca key: %v", err)
+		}
+		adv := *gatewayAddr
+		if adv == "" {
+			adv = *grpcAddr
+		}
+		bs = connector.NewBootstrapServer(store, caCert, caDER, caKey, *bootstrapToken, adv, 90*24*time.Hour)
+	}
+	if *bootstrapAddr != "" && bs == nil {
+		log.Fatalf("bootstrap requires -dsn, -ca-key and -bootstrap-token")
 	}
 
 	// gRPC 接入（mTLS 强制）
@@ -95,6 +131,9 @@ func main() {
 	}
 	gs := grpc.NewServer(grpc.Creds(creds))
 	agentv1.RegisterAgentGatewayServer(gs, srv)
+	if bs != nil {
+		agentv1.RegisterAgentBootstrapServer(gs, bs) // RotateCertificate 走 mTLS
+	}
 	go func() {
 		log.Printf("connector gRPC(mTLS) listening on %s", *grpcAddr)
 		if err := gs.Serve(lis); err != nil {
@@ -102,24 +141,8 @@ func main() {
 		}
 	}()
 
-	// 注册服务（server-auth TLS：agent 尚无证书，凭 bootstrap token 认证）
+	// 注册服务 server-auth 监听（agent 首启尚无证书，凭 bootstrap token 认证）
 	if *bootstrapAddr != "" {
-		if store == nil || *caKeyFile == "" || *bootstrapToken == "" {
-			log.Fatalf("bootstrap requires -dsn, -ca-key and -bootstrap-token")
-		}
-		caCert, caDER, err := loadCACert(*tlsCA)
-		if err != nil {
-			log.Fatalf("load ca cert: %v", err)
-		}
-		caKey, err := authenv.LoadPrivateKeyPEM(*caKeyFile)
-		if err != nil {
-			log.Fatalf("load ca key: %v", err)
-		}
-		adv := *gatewayAddr
-		if adv == "" {
-			adv = *grpcAddr
-		}
-		bs := connector.NewBootstrapServer(store, caCert, caDER, caKey, *bootstrapToken, adv, 90*24*time.Hour)
 		blis, err := net.Listen("tcp", *bootstrapAddr)
 		if err != nil {
 			log.Fatalf("bootstrap listen: %v", err)
@@ -317,6 +340,17 @@ func isUUID(s string) bool {
 		}
 	}
 	return true
+}
+
+// splitTrim 逗号分隔列表解析（broker 列表）。
+func splitTrim(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func loadSigner(path string) ed25519.PrivateKey {

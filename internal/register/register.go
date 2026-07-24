@@ -29,6 +29,7 @@ type Identity struct {
 	AssetID             string `json:"asset_id"`
 	EnrollmentRequestID string `json:"enrollment_request_id"`
 	RegisteredAt        int64  `json:"registered_at"`
+	CertNotAfter        int64  `json:"cert_not_after,omitempty"` // 证书到期（Unix 秒），驱动自动轮换
 }
 
 type registerRequest struct {
@@ -161,7 +162,8 @@ func (m *Module) registerBaseURL() string {
 
 func (m *Module) doRegister(ctx context.Context, token, enrollID string) (string, error) {
 	if m.cfg.Register.BootstrapAddr != "" {
-		return m.doRegisterGRPC(ctx, token, enrollID) // P1：gRPC Bootstrap + CSR 签发
+		assetID, _, err := m.doRegisterGRPC(ctx, token, enrollID) // P1：gRPC Bootstrap + CSR 签发
+		return assetID, err
 	}
 	materials := collectMaterials()
 	reqBody := registerRequest{

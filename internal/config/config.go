@@ -71,6 +71,8 @@ type RegisterConf struct {
 	BootstrapToken string `yaml:"bootstrap_token"`  // 一次性引导凭据（正式版从文件读取）
 	BootstrapAddr  string `yaml:"bootstrap_addr"`   // gRPC Bootstrap 地址（P1；空=走 M2 HTTP 回退）
 	BootstrapCAFile string `yaml:"bootstrap_ca_file"` // 校验注册服务端的 CA（空=TOFU 跳过校验，仅开发）
+	// 证书轮换窗口（M5b）：剩余有效期不足该天数时自动换新证书；0/缺省按 30 天处理
+	RotateBeforeDays int `yaml:"rotate_before_days"`
 }
 
 // InventoryConf 资产采集上报（设计文档 §8.2）。

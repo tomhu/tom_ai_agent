@@ -329,6 +329,31 @@ func (s *Store) CompleteEnrollment(ctx context.Context, enrollID, assetID, seria
 	return tx.Commit()
 }
 
+// RotateCertificateTx 证书轮换台账（单事务）：asset 现有 active 证书置 superseded，插入新 active 行。
+// asset 无任何 active 证书记录（未注册）时返回 ErrNotFound，调用方映射 FailedPrecondition。
+func (s *Store) RotateCertificateTx(ctx context.Context, assetID, serial, fingerprint string,
+	notBefore, notAfter time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx,
+		`UPDATE register.agent_certificate SET status='superseded' WHERE asset_id=$1 AND status='active'`, assetID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO register.agent_certificate(asset_id, serial_no, fingerprint, not_before, not_after)
+		 VALUES ($1,$2,$3,$4,$5)`, assetID, serial, fingerprint, notBefore, notAfter); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // NewUUID 生成 RFC4122 v4 UUID（crypto/rand，无外部依赖）。
 func NewUUID() string {
 	var b [16]byte

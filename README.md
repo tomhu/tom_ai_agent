@@ -37,6 +37,9 @@ AIOps 主机智能代理（Host Agent）——单二进制 Linux 采集与受控
 - [x] Exec 插件框架（M7）：manifest 治理（root 所有/组不可写/目录内解析/符号链接防逃逸）、plugin.* 动作注册、插件级超时上限；麒麟 E2E 6/6（含篡改负向）
 - [x] Connector 原型（P0，平台侧）：会话注册表（epoch fencing、replace_old 重复连接策略+安全事件）、指令邮箱（离线缓存+TTL+取消推送）、Sink 抽象（P1 接 Kafka）、admin API；agent→Connector 跨组件 E2E 9/9
 - [x] P1 平台化：AgentBootstrap gRPC 注册（server-auth TLS + token，CSR 校验，dev CA 签发 CN=asset_id 客户端证书，私钥不离 agent；enrollment 幂等 + 证书台账落 PG）+ 指令状态机落库（cmd.command/event/outbox，写路径单事务，Outbox dispatcher 至少一次投递，admin API 返回平台 cmd_id）；麒麟 E2E 17/17（全新 bootstrap → mTLS 接入 → 指令全生命周期事件/结果落库 → 取消 → 幂等重放材料 → 错误 token 拒绝）
+- [x] 证书轮换（P1.5）：RotateCertificate 走 mTLS 强身份复核（peer CN==asset_id），台账旧证 superseded/新证 active 单事务；agent 按 rotate_before_days（缺省 30）临期自动换新（新密钥对+CSR，失败 fail-open）；麒麟 E2E 17/17（强制轮换 → 指纹/台账/identity 全更新 → 新证接入 → 指令往返）
+- [x] Kafka 数据出口（P2）：franz-go producer（ACKS=all 自动幂等），aiops.metrics/reports/events 三 topic 扇出；投递失败不 ACK → agent 保 WAL，Kafka 恢复后至少一次补投（实测验证）；麒麟 Kafka 4.1.2 KRaft 单机（Temurin 17，TUNA 镜像）E2E 12/12
+- [x] IAM/TOTP 首切片（管控台起点）：console 服务（stdlib HTTP）——首个 admin 引导创建、PBKDF2-SHA256 口令（stdlib crypto/pbkdf2）、RFC 6238 TOTP enroll/confirm（登录强制）、Bearer 会话（库只存哈希）、RBAC（admin/operator/auditor）+ 指令提交/取消/结果/资产端点反代 connector 并逐端点鉴权；单测含 RFC 6238 附录 B 官方测试向量；麒麟 E2E 24/24（引导→TOTP 全流程→operator 指令闭环→auditor 只读→越权 403/401）
 
 ## 构建
 
