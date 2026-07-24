@@ -3,6 +3,7 @@ module github.com/tomhu/tom_ai_agent
 go 1.26.3
 
 require (
+	github.com/lib/pq v1.12.3
 	google.golang.org/grpc v1.82.1
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1

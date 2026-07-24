@@ -97,12 +97,26 @@ func main() {
 		engine.AddActions(plugin.LoadDir(cfg.Executor.PluginDir))
 	}
 
-	app.Add(register.New(cfg, rep.SetAssetID))
+	reg := register.New(cfg, rep.SetAssetID)
+	app.Add(reg)
 	app.Add(rep)
 	app.Add(sched)
 	app.Add(watchdog.NewSelfMonitor(cfg, rep, sched, version))
 	app.Add(watchdog.NewSentinel(&cfg.Watchdog, sched, rep))
 	app.Add(inv)
+
+	// gRPC bootstrap 模式（P1）：未配置证书且未指定 asset_id 时，先同步注册拿证书再建上行。
+	// 注册成功后 mTLS 三件套指向 data_dir/pki 下平台签发材料。
+	if cfg.Uplink.Mode == "grpc" && cfg.Uplink.CertFile == "" && cfg.Agent.AssetID == "" {
+		if err := reg.EnsureIdentity(ctx); err != nil {
+			slog.Error("bootstrap register", "err", err)
+			os.Exit(1)
+		}
+		if pki := reg.PKIPaths(); pki != nil {
+			cfg.Uplink.CAFile, cfg.Uplink.CertFile, cfg.Uplink.KeyFile = pki.CA, pki.Cert, pki.Key
+			slog.Info("mTLS identity from bootstrap", "cert", pki.Cert)
+		}
+	}
 	if cfg.Executor.Enabled {
 		app.Add(engine)
 		switch cfg.Uplink.Mode {

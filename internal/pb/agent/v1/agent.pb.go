@@ -1494,6 +1494,7 @@ type RegisterRequest struct {
 	EnrollmentRequestId string                 `protobuf:"bytes,1,opt,name=enrollment_request_id,json=enrollmentRequestId,proto3" json:"enrollment_request_id,omitempty"` // 幂等键
 	BootstrapToken      string                 `protobuf:"bytes,2,opt,name=bootstrap_token,json=bootstrapToken,proto3" json:"bootstrap_token,omitempty"`
 	Materials           map[string]string      `protobuf:"bytes,3,rep,name=materials,proto3" json:"materials,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // machine_id/hostname/kernel/arch/os
+	CsrDer              []byte                 `protobuf:"bytes,4,opt,name=csr_der,json=csrDer,proto3" json:"csr_der,omitempty"`                                                                   // v1.1 增补：PKCS#10 CSR（CN 由平台改写为 asset_id）
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -1549,12 +1550,22 @@ func (x *RegisterRequest) GetMaterials() map[string]string {
 	return nil
 }
 
+func (x *RegisterRequest) GetCsrDer() []byte {
+	if x != nil {
+		return x.CsrDer
+	}
+	return nil
+}
+
 type RegisterResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	AssetId       string                 `protobuf:"bytes,1,opt,name=asset_id,json=assetId,proto3" json:"asset_id,omitempty"`
-	GatewayAddr   string                 `protobuf:"bytes,2,opt,name=gateway_addr,json=gatewayAddr,proto3" json:"gateway_addr,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	AssetId        string                 `protobuf:"bytes,1,opt,name=asset_id,json=assetId,proto3" json:"asset_id,omitempty"`
+	GatewayAddr    string                 `protobuf:"bytes,2,opt,name=gateway_addr,json=gatewayAddr,proto3" json:"gateway_addr,omitempty"`
+	CertificateDer []byte                 `protobuf:"bytes,3,opt,name=certificate_der,json=certificateDer,proto3" json:"certificate_der,omitempty"` // v1.1 增补：平台 PKI 签发的客户端证书（CN=asset_id）
+	CaDer          []byte                 `protobuf:"bytes,4,opt,name=ca_der,json=caDer,proto3" json:"ca_der,omitempty"`                            // 根 CA（ pinning 用）
+	NotAfter       int64                  `protobuf:"varint,5,opt,name=not_after,json=notAfter,proto3" json:"not_after,omitempty"`                  // 证书到期（Unix 秒），驱动轮换
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *RegisterResponse) Reset() {
@@ -1599,6 +1610,27 @@ func (x *RegisterResponse) GetGatewayAddr() string {
 		return x.GatewayAddr
 	}
 	return ""
+}
+
+func (x *RegisterResponse) GetCertificateDer() []byte {
+	if x != nil {
+		return x.CertificateDer
+	}
+	return nil
+}
+
+func (x *RegisterResponse) GetCaDer() []byte {
+	if x != nil {
+		return x.CaDer
+	}
+	return nil
+}
+
+func (x *RegisterResponse) GetNotAfter() int64 {
+	if x != nil {
+		return x.NotAfter
+	}
+	return 0
 }
 
 type RotateCertRequest struct {
@@ -1826,17 +1858,21 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"attributes\x1a=\n" +
 	"\x0fAttributesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xfa\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x93\x02\n" +
 	"\x0fRegisterRequest\x122\n" +
 	"\x15enrollment_request_id\x18\x01 \x01(\tR\x13enrollmentRequestId\x12'\n" +
 	"\x0fbootstrap_token\x18\x02 \x01(\tR\x0ebootstrapToken\x12L\n" +
-	"\tmaterials\x18\x03 \x03(\v2..tomai.agent.v1.RegisterRequest.MaterialsEntryR\tmaterials\x1a<\n" +
+	"\tmaterials\x18\x03 \x03(\v2..tomai.agent.v1.RegisterRequest.MaterialsEntryR\tmaterials\x12\x17\n" +
+	"\acsr_der\x18\x04 \x01(\fR\x06csrDer\x1a<\n" +
 	"\x0eMaterialsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"P\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xad\x01\n" +
 	"\x10RegisterResponse\x12\x19\n" +
 	"\basset_id\x18\x01 \x01(\tR\aassetId\x12!\n" +
-	"\fgateway_addr\x18\x02 \x01(\tR\vgatewayAddr\"G\n" +
+	"\fgateway_addr\x18\x02 \x01(\tR\vgatewayAddr\x12'\n" +
+	"\x0fcertificate_der\x18\x03 \x01(\fR\x0ecertificateDer\x12\x15\n" +
+	"\x06ca_der\x18\x04 \x01(\fR\x05caDer\x12\x1b\n" +
+	"\tnot_after\x18\x05 \x01(\x03R\bnotAfter\"G\n" +
 	"\x11RotateCertRequest\x12\x19\n" +
 	"\basset_id\x18\x01 \x01(\tR\aassetId\x12\x17\n" +
 	"\acsr_der\x18\x02 \x01(\fR\x06csrDer\"Z\n" +

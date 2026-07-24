@@ -102,7 +102,7 @@ func (m *Module) Start(ctx context.Context) error {
 	}
 	// 3. 无引导凭据：匿名运行（仅本地/stdout 调试用）
 	token := m.cfg.Register.BootstrapToken
-	if token == "" || m.registerBaseURL() == "" {
+	if token == "" || (m.registerBaseURL() == "" && m.cfg.Register.BootstrapAddr == "") {
 		slog.Warn("no identity and no bootstrap token; running unregistered (asset_id empty)")
 		m.onReady("")
 		return nil
@@ -160,6 +160,9 @@ func (m *Module) registerBaseURL() string {
 }
 
 func (m *Module) doRegister(ctx context.Context, token, enrollID string) (string, error) {
+	if m.cfg.Register.BootstrapAddr != "" {
+		return m.doRegisterGRPC(ctx, token, enrollID) // P1：gRPC Bootstrap + CSR 签发
+	}
 	materials := collectMaterials()
 	reqBody := registerRequest{
 		EnrollmentRequestID: enrollID,

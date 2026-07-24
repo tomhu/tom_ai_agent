@@ -4,8 +4,10 @@
 package connector
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/tomhu/tom_ai_agent/internal/authenv"
 	agentv1 "github.com/tomhu/tom_ai_agent/internal/pb/agent/v1"
+	"github.com/tomhu/tom_ai_agent/internal/platform"
 )
 
 // Sink 下行数据出口抽象（P0 日志实现；P1 Kafka producer）。
@@ -32,6 +35,7 @@ type Server struct {
 	mailbox  *Mailbox
 	sink     Sink
 	signer   ed25519.PrivateKey // nil=不签名（仅开发）
+	store    *platform.Store    // nil=P0 纯内存（不Persist）
 
 	OfflineTimeout time.Duration
 }
@@ -43,6 +47,21 @@ func NewServer(signer ed25519.PrivateKey, sink Sink) *Server {
 		sink:           sink,
 		signer:         signer,
 		OfflineTimeout: 90 * time.Second,
+	}
+}
+
+// SetStore 启用指令状态机落库（P1）。nil 保持 P0 内存行为。
+func (s *Server) SetStore(st *platform.Store) { s.store = st }
+
+// persist 落库辅助：库未启用或指令不在库（开发态直投邮箱）仅记日志，不阻断数据面。
+func (s *Server) persist(event string, fn func(ctx context.Context) error) {
+	if s.store == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := fn(ctx); err != nil && err != platform.ErrNotFound {
+		slog.Warn("command persist failed", "event", event, "err", err)
 	}
 }
 
@@ -105,6 +124,15 @@ func (s *Server) Control(stream agentv1.AgentGateway_ControlServer) error {
 			case *agentv1.AgentControlFrame_CommandAck:
 				slog.Info("command ack", "asset_id", hello.AssetId,
 					"cmd_id", fr.CommandAck.CmdId, "accepted", fr.CommandAck.Accepted)
+				if !fr.CommandAck.Accepted {
+					to := fr.CommandAck.RejectReason
+					if to == "" {
+						to = "REJECTED"
+					}
+					s.persist("rejected", func(ctx context.Context) error {
+						return s.store.CompleteCommand(ctx, fr.CommandAck.CmdId, to, nil)
+					})
+				}
 			}
 		}
 	}()
@@ -144,6 +172,9 @@ func (s *Server) Control(stream agentv1.AgentGateway_ControlServer) error {
 				return err
 			}
 			slog.Info("command dispatched", "asset_id", hello.AssetId, "cmd_id", c.CmdID, "action", c.Action)
+			s.persist("delivered", func(ctx context.Context) error {
+				return s.store.Transition(ctx, c.CmdID, "delivered", "DELIVERED", "connector", nil)
+			})
 		}
 		for _, id := range cancels {
 			if err := stream.Send(&agentv1.GatewayControlFrame{Frame: &agentv1.GatewayControlFrame_Cancel{
@@ -199,6 +230,10 @@ func (s *Server) Reports(stream agentv1.AgentGateway_ReportsServer) error {
 			}
 			if r.Kind == agentv1.ReportKind_REPORT_KIND_RESULTS {
 				s.mailbox.Complete(it.Id, it.Payload)
+				terminal := resultStatus(it.Payload)
+				s.persist("result_received", func(ctx context.Context) error {
+					return s.store.CompleteCommand(ctx, it.Id, terminal, it.Payload)
+				})
 			}
 			ack.AckedIds = append(ack.AckedIds, it.Id)
 		}
@@ -219,6 +254,17 @@ func reportKindName(k agentv1.ReportKind) string {
 	default:
 		return "unknown"
 	}
+}
+
+// resultStatus 从执行器结果 JSON 提取终态（executor.Result.Status）；缺失按 SUCCEEDED 兜底。
+func resultStatus(payload []byte) string {
+	var r struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(payload, &r); err == nil && r.Status != "" {
+		return r.Status
+	}
+	return "SUCCEEDED"
 }
 
 func newSessionID() string {

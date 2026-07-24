@@ -180,11 +180,15 @@ message RegisterRequest {
   string enrollment_request_id = 1; // 幂等键
   string bootstrap_token = 2;
   map<string, string> materials = 3; // machine_id/hostname/kernel/arch/os
+  bytes csr_der = 4;                 // v1.1 增补：PKCS#10 CSR（CN 由平台改写为 asset_id）
 }
 
 message RegisterResponse {
   string asset_id = 1;
   string gateway_addr = 2;
+  bytes certificate_der = 3; // v1.1 增补：平台 PKI 签发的客户端证书（CN=asset_id）
+  bytes ca_der = 4;          // 根 CA（ pinning 用）
+  int64 not_after = 5;       // 证书到期（Unix 秒），驱动轮换
 }
 
 message RotateCertRequest {
