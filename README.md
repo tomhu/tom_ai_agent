@@ -40,6 +40,9 @@ AIOps 主机智能代理（Host Agent）——单二进制 Linux 采集与受控
 - [x] 证书轮换（P1.5）：RotateCertificate 走 mTLS 强身份复核（peer CN==asset_id），台账旧证 superseded/新证 active 单事务；agent 按 rotate_before_days（缺省 30）临期自动换新（新密钥对+CSR，失败 fail-open）；麒麟 E2E 17/17（强制轮换 → 指纹/台账/identity 全更新 → 新证接入 → 指令往返）
 - [x] Kafka 数据出口（P2）：franz-go producer（ACKS=all 自动幂等），aiops.metrics/reports/events 三 topic 扇出；投递失败不 ACK → agent 保 WAL，Kafka 恢复后至少一次补投（实测验证）；麒麟 Kafka 4.1.2 KRaft 单机（Temurin 17，TUNA 镜像）E2E 12/12
 - [x] IAM/TOTP 首切片（管控台起点）：console 服务（stdlib HTTP）——首个 admin 引导创建、PBKDF2-SHA256 口令（stdlib crypto/pbkdf2）、RFC 6238 TOTP enroll/confirm（登录强制）、Bearer 会话（库只存哈希）、RBAC（admin/operator/auditor）+ 指令提交/取消/结果/资产端点反代 connector 并逐端点鉴权；单测含 RFC 6238 附录 B 官方测试向量；麒麟 E2E 24/24（引导→TOTP 全流程→operator 指令闭环→auditor 只读→越权 403/401）
+- [x] 指标链路闭环：metricsbridge（cmd/metricsbridge）消费 aiops.metrics → VictoriaMetrics /api/v1/import 原生 JSON 行（指标名 .→_，asset_id 标签），POST 成功才提交 offset（失败退避重放）；麒麟 E2E 9/9（VictoriaMetrics v1.114 单机 + PromQL 断言 cpu_usage_* 多序列 + asset_id 标签 + consumer group lag=0）
+- [x] 进程信息上送解除缓建：inventory.processes.upload_enabled 默认 true（cmdline 按 redact_patterns 脱敏）；麒麟 E2E 12/12（诱饵进程 --password=明文 → Kafka 中只见 --password=***、明文零泄漏；inventory.refresh 指令即时触发；静态信息健全）
+- [x] console 审计 + 会话管理：iam.audit 表（003_audit.sql），登录/建用户/TOTP/指令/吊销全量留痕（含 401/403 denied），审计异步落库不阻塞请求；logout（204）、活跃会话列表/吊销、审计查询（仅 admin 经 "*" 通配）；麒麟 E2E 31/31（审计断言→吊销后 token 401→logout 闭环→operator/auditor 越权 403）
 
 ## 构建
 

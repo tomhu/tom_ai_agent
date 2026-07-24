@@ -90,7 +90,7 @@ type InventoryPackagesConf struct {
 
 type InventoryProcessesConf struct {
 	Enabled        bool     `yaml:"enabled"`
-	UploadEnabled  bool     `yaml:"upload_enabled"` // 缓建决策：默认 false，仅采集缓存
+	UploadEnabled  bool     `yaml:"upload_enabled"` // 2026-07 解除缓建：默认上送（cmdline 按 redact_patterns 脱敏）
 	RedactPatterns []string `yaml:"redact_patterns"`
 }
 
@@ -144,7 +144,7 @@ func Load(path string) (*Config, error) {
 			},
 			Processes: InventoryProcessesConf{
 				Enabled:        true,
-				UploadEnabled:  false,
+				UploadEnabled:  true, // 解除缓建（2026-07）：脱敏后上送
 				RedactPatterns: []string{"--password=*", "--token=*", "--secret=*"},
 			},
 		},

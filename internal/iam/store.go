@@ -5,6 +5,7 @@ package iam
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -133,6 +134,52 @@ func (s *Store) FindSession(ctx context.Context, tokenHash string) (string, time
 	return username, expires, nil
 }
 
+// DeleteSession 按 token 哈希删除会话（logout）；不存在视为成功（幂等）。
+func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM iam.session WHERE token_hash=$1`, tokenHash)
+	return err
+}
+
+// SessionInfo 会话视图（活跃=未过期）。
+type SessionInfo struct {
+	SessionID int64     `json:"session_id"`
+	Username  string    `json:"username"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// ListSessions 活跃（未过期）会话列表，按创建时间倒序。
+func (s *Store) ListSessions(ctx context.Context) ([]SessionInfo, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT session_id, username, created_at, expires_at
+		 FROM iam.session WHERE expires_at > now() ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SessionInfo
+	for rows.Next() {
+		var si SessionInfo
+		if err := rows.Scan(&si.SessionID, &si.Username, &si.CreatedAt, &si.ExpiresAt); err != nil {
+			return nil, err
+		}
+		out = append(out, si)
+	}
+	return out, rows.Err()
+}
+
+// RevokeSession 按 session_id 删除会话；不存在返回 ErrNotFound。
+func (s *Store) RevokeSession(ctx context.Context, sessionID int64) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM iam.session WHERE session_id=$1`, sessionID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // DeleteExpiredSessions 清理过期会话，返回删除行数（供定时/启动清理调用）。
 func (s *Store) DeleteExpiredSessions(ctx context.Context) (int64, error) {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM iam.session WHERE expires_at < now()`)
@@ -140,4 +187,64 @@ func (s *Store) DeleteExpiredSessions(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// ---------- 审计 ----------
+
+// AuditEntry 一条审计记录；Target/ClientIP 可空，Detail 为 JSON（空存 NULL）。
+type AuditEntry struct {
+	AuditID   int64           `json:"audit_id"`
+	Actor     string          `json:"actor"`
+	Action    string          `json:"action"`
+	Target    string          `json:"target,omitempty"`
+	Result    string          `json:"result"`
+	ClientIP  string          `json:"client_ip,omitempty"`
+	Detail    json.RawMessage `json:"detail,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
+}
+
+// Audit 写入一条审计记录。调用方异步使用，失败仅 slog.Warn，不得影响请求路径。
+func (s *Store) Audit(ctx context.Context, e AuditEntry) error {
+	var target, clientIP, detail any
+	if e.Target != "" {
+		target = e.Target
+	}
+	if e.ClientIP != "" {
+		clientIP = e.ClientIP
+	}
+	if len(e.Detail) > 0 {
+		detail = string(e.Detail)
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO iam.audit(actor, action, target, result, client_ip, detail)
+		 VALUES ($1,$2,$3,$4,$5,$6)`,
+		e.Actor, e.Action, target, e.Result, clientIP, detail)
+	return err
+}
+
+// ListAudit 按时间倒序取最近 limit 条审计记录。
+func (s *Store) ListAudit(ctx context.Context, limit int) ([]AuditEntry, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT audit_id, actor, action, target, result, client_ip, detail, created_at
+		 FROM iam.audit ORDER BY audit_id DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AuditEntry
+	for rows.Next() {
+		var e AuditEntry
+		var target, clientIP, detail sql.NullString
+		if err := rows.Scan(&e.AuditID, &e.Actor, &e.Action, &target, &e.Result,
+			&clientIP, &detail, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		e.Target = target.String
+		e.ClientIP = clientIP.String
+		if detail.Valid {
+			e.Detail = json.RawMessage(detail.String)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }

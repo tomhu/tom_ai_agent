@@ -15,6 +15,9 @@ const (
 	PermCommandCancel = "command.cancel"
 	PermCommandResult = "command.result"
 	PermAssetView     = "asset.view"
+	// PermAdmin 通配标记：作为 auth 的 perm 传入时等效"仅 admin"
+	//（rolePerms 中只有 admin 含 "*" 键，其余角色永不命中）。
+	PermAdmin = "*"
 )
 
 // rolePerms 角色 → 权限集合；admin 用 "*" 通配全部（含未来新增权限，避免漏配）。
