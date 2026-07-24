@@ -35,6 +35,7 @@ AIOps 主机智能代理（Host Agent）——单二进制 Linux 采集与受控
 - [x] cgroup v2 执行隔离（M5d）：memory.max/cpu.max 单指令限额，不可用时降级进程组查杀
 - [x] M5 全栈麒麟 E2E 9/9（gRPC+mTLS+签名信封）：六组指令用例 + 握手 + RSS；网关日志确认 signed=true、CN 复核通过；负向实测：未签名信封 fail-closed 拒绝、网关重启后 agent 自动重连
 - [x] Exec 插件框架（M7）：manifest 治理（root 所有/组不可写/目录内解析/符号链接防逃逸）、plugin.* 动作注册、插件级超时上限；麒麟 E2E 6/6（含篡改负向）
+- [x] Connector 原型（P0，平台侧）：会话注册表（epoch fencing、replace_old 重复连接策略+安全事件）、指令邮箱（离线缓存+TTL+取消推送）、Sink 抽象（P1 接 Kafka）、admin API；agent→Connector 跨组件 E2E 9/9
 
 ## 构建
 
