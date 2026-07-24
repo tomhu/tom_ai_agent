@@ -33,7 +33,7 @@ AIOps 主机智能代理（Host Agent）——单二进制 Linux 采集与受控
 - [x] mTLS（M5b）：自研 dev PKI（Ed25519，tools/devca）、TLS1.3 双向认证、网关强制客户端证书 CN=asset_id 复核（本机 probe 正/反测试通过）
 - [x] 信封验签（M5c）：规范序列化 + Ed25519 签名 + nonce 防重放，agent fail-closed（authenv 单测：篡改 8 种场景全拒）
 - [x] cgroup v2 执行隔离（M5d）：memory.max/cpu.max 单指令限额，不可用时降级进程组查杀
-- [ ] M5 全栈麒麟 E2E（gRPC+mTLS+签名，待 VM 恢复）
+- [x] M5 全栈麒麟 E2E 9/9（gRPC+mTLS+签名信封）：六组指令用例 + 握手 + RSS；网关日志确认 signed=true、CN 复核通过；负向实测：未签名信封 fail-closed 拒绝、网关重启后 agent 自动重连
 - [ ] Exec 插件（M7）
 
 ## 构建

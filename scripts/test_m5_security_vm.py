@@ -25,6 +25,7 @@ import paramiko
 VM_IP = os.environ.get("VM_IP", "172.19.170.178")
 USER, PASS = "tom", "Peter2026@"
 GW = os.environ.get("GW", "http://localhost:18080")
+GW_HOST = os.environ.get("GW_HOST", "172.18.32.1")  # VM 视角的宿主网关地址（Default Switch 重启会变）
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 DIST = os.path.join(ROOT, "dist", "tom_ai_agent")
 PKI = os.path.join(ROOT, "pki", "dev")
@@ -73,15 +74,15 @@ def gw_result(cmd_id, wait=30):
     return None
 
 
-CONFIG = """agent:
+CONFIG_TEMPLATE = """agent:
   data_dir: /var/lib/tom_ai_agent
   log_level: info
   asset_id: ""
 
 uplink:
   mode: grpc
-  addr: 172.19.160.1:18081
-  http_addr: http://172.19.160.1:18080
+  addr: GW_HOST_PLACEHOLDER:18081
+  http_addr: http://GW_HOST_PLACEHOLDER:18080
   ca_file: /etc/tom_ai_agent/pki/ca.crt
   cert_file: /etc/tom_ai_agent/pki/agent.crt
   key_file: /etc/tom_ai_agent/pki/agent.key
@@ -117,6 +118,7 @@ executor:
   command_pubkey_file: /etc/tom_ai_agent/pki/signer.pub
   cgroup: { enabled: true, memory_max_mb: 256, cpu_quota_pct: 100 }
 """
+CONFIG = CONFIG_TEMPLATE.replace("GW_HOST_PLACEHOLDER", GW_HOST)
 
 
 def main():
